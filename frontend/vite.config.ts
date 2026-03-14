@@ -9,6 +9,10 @@ export default defineConfig({
         target: 'http://localhost:5028',
         changeOrigin: true,
       },
+      '/roundtable': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
     },
   },
 })

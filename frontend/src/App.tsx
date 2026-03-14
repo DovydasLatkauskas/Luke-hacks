@@ -9,6 +9,8 @@ import { planWithOpenAiAgent, fetchGoogleRoute } from './lib/agent'
 import { fetchRoute, type RouteGeometry } from './lib/osrm'
 import { AuthPage } from './pages/AuthPage'
 import { Dashboard } from './pages/Dashboard'
+import RoundTableLobby from './pages/RoundTableLobby'
+import NegotiationRoom from './pages/NegotiationRoom'
 import type { AgentPlan, PlannedRoute } from './types/agent'
 import type { LngLat, POI } from './types/map'
 
@@ -343,6 +345,8 @@ export default function App() {
           </RequireAuth>
         )}
       />
+      <Route path="/roundtable" element={<RoundTableLobby />} />
+      <Route path="/roundtable/:sessionId" element={<NegotiationRoom />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
