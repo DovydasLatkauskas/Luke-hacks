@@ -4,11 +4,17 @@ import { ChatDock } from './components/ChatDock'
 import { MapView } from './components/MapView'
 import { useNearbyPOIs } from './hooks/useNearbyPOIs'
 import { useUserLocation } from './hooks/useUserLocation'
+import { planWithOpenAiAgent, fetchGoogleRoute } from './lib/agent'
 import { fetchRoute, type RouteGeometry } from './lib/osrm'
 import { Dashboard } from './pages/Dashboard'
+import type { AgentPlan, PlannedRoute } from './types/agent'
 import type { LngLat, POI } from './types/map'
 
 export type Mode = 'day' | 'night'
+
+type RouteProvider = 'osrm' | 'google'
+
+type RouteMeta = Pick<PlannedRoute, 'distanceMeters' | 'durationText'>
 
 const FALLBACK: LngLat = { lng: -3.1883, lat: 55.9533 }
 
@@ -25,74 +31,185 @@ function MapLayout({
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [allSelectedPois, setAllSelectedPois] = useState<POI[]>([])
   const [routeGeometry, setRouteGeometry] = useState<RouteGeometry | null>(null)
+  const [routeMeta, setRouteMeta] = useState<RouteMeta | null>(null)
   const [activePoi, setActivePoi] = useState<POI | null>(null)
+  const [routeProvider, setRouteProvider] = useState<RouteProvider>('osrm')
+  const [agentPlan, setAgentPlan] = useState<AgentPlan | null>(null)
+  const [plannerLoading, setPlannerLoading] = useState(false)
+  const [plannerError, setPlannerError] = useState<string | null>(null)
+
   const routeAbortRef = useRef<AbortController | null>(null)
+  const plannerAbortRef = useRef<AbortController | null>(null)
 
   const excludeIds = useMemo(() => new Set(selectedIds), [selectedIds])
+  const isAgentPlanActive = agentPlan !== null
 
-  const lastSelectedPoi = allSelectedPois.length > 0
+  const lastSelectedPoi = !isAgentPlanActive && allSelectedPois.length > 0
     ? allSelectedPois[allSelectedPois.length - 1]
     : null
-  const queryCenter: LngLat = lastSelectedPoi
+  const queryCenter: LngLat | null = lastSelectedPoi
     ? { lng: lastSelectedPoi.lng, lat: lastSelectedPoi.lat }
     : center
 
-  const { pois: suggestedPois, loading: poisLoading } = useNearbyPOIs(queryCenter, mode, excludeIds)
+  const { pois: suggestedPois, loading: poisLoading } = useNearbyPOIs(
+    isAgentPlanActive ? null : queryCenter,
+    mode,
+    excludeIds,
+  )
 
-  useEffect(() => {
+  const displayPois = agentPlan?.places ?? suggestedPois
+  const routeOrigin = center
+
+  const clearSelections = useCallback(() => {
     setSelectedIds([])
     setAllSelectedPois([])
     setRouteGeometry(null)
+    setRouteMeta(null)
     setActivePoi(null)
-  }, [mode])
+  }, [])
+
+  const clearAgentPlan = useCallback(() => {
+    plannerAbortRef.current?.abort()
+    setAgentPlan(null)
+    setPlannerError(null)
+    setPlannerLoading(false)
+    setRouteProvider('osrm')
+    clearSelections()
+  }, [clearSelections])
 
   useEffect(() => {
-    if (!loc || allSelectedPois.length === 0) {
+    routeAbortRef.current?.abort()
+    plannerAbortRef.current?.abort()
+    setRouteProvider('osrm')
+    setAgentPlan(null)
+    setPlannerError(null)
+    setPlannerLoading(false)
+    clearSelections()
+  }, [mode, clearSelections])
+
+  useEffect(() => {
+    routeAbortRef.current?.abort()
+
+    if (allSelectedPois.length === 0) {
       setRouteGeometry(null)
+      setRouteMeta(null)
       return
     }
 
-    routeAbortRef.current?.abort()
     const ctrl = new AbortController()
     routeAbortRef.current = ctrl
 
+    if (routeProvider === 'google') {
+      fetchGoogleRoute(
+        {
+          origin: routeOrigin,
+          waypoints: allSelectedPois.map((poi) => ({
+            id: poi.id,
+            name: poi.name,
+            lat: poi.lat,
+            lng: poi.lng,
+          })),
+        },
+        ctrl.signal,
+      ).then((route) => {
+        if (ctrl.signal.aborted) return
+        setRouteGeometry(route?.geometry ?? null)
+        setRouteMeta(route ? { distanceMeters: route.distanceMeters, durationText: route.durationText } : null)
+      }).catch((err: unknown) => {
+        if (ctrl.signal.aborted) return
+        console.error('[Google Route]', err)
+        setRouteGeometry(null)
+        setRouteMeta(null)
+      })
+
+      return () => ctrl.abort()
+    }
+
     const waypoints: LngLat[] = [
-      loc,
+      routeOrigin,
       ...allSelectedPois.map((p) => ({ lng: p.lng, lat: p.lat })),
     ]
+
     fetchRoute(waypoints, ctrl.signal).then((geo) => {
-      if (!ctrl.signal.aborted) setRouteGeometry(geo)
+      if (!ctrl.signal.aborted) {
+        setRouteGeometry(geo)
+        setRouteMeta(null)
+      }
     })
 
     return () => ctrl.abort()
-  }, [loc, allSelectedPois])
+  }, [allSelectedPois, routeOrigin, routeProvider])
 
   const handleSelectWaypoint = useCallback(
     (poiId: string) => {
+      const candidatePois = agentPlan?.places ?? suggestedPois
+
       if (selectedIds.includes(poiId)) {
         setSelectedIds((prev) => prev.filter((id) => id !== poiId))
         setAllSelectedPois((prev) => prev.filter((p) => p.id !== poiId))
       } else {
-        const poi = suggestedPois.find((p) => p.id === poiId)
+        const poi = candidatePois.find((p) => p.id === poiId)
         if (!poi) return
         setSelectedIds((prev) => [...prev, poiId])
         setAllSelectedPois((prev) => [...prev, poi])
       }
+
+      setRouteProvider(agentPlan ? 'google' : 'osrm')
       setActivePoi(null)
     },
-    [selectedIds, suggestedPois],
+    [agentPlan, selectedIds, suggestedPois],
   )
 
   const handlePoiTap = useCallback(
     (poiId: string) => {
-      const poi = suggestedPois.find((p) => p.id === poiId)
+      const poi = displayPois.find((p) => p.id === poiId)
         ?? allSelectedPois.find((p) => p.id === poiId)
       setActivePoi((prev) => (prev?.id === poiId ? null : poi ?? null))
     },
-    [suggestedPois, allSelectedPois],
+    [displayPois, allSelectedPois],
   )
 
   const handleClosePopup = useCallback(() => setActivePoi(null), [])
+
+  const handlePlannerSubmit = useCallback(async (prompt: string) => {
+    plannerAbortRef.current?.abort()
+    const ctrl = new AbortController()
+    plannerAbortRef.current = ctrl
+
+    setPlannerLoading(true)
+    setPlannerError(null)
+
+    try {
+      const plan = await planWithOpenAiAgent(
+        {
+          prompt,
+          currentLocation: center,
+        },
+        ctrl.signal,
+      )
+
+      if (ctrl.signal.aborted) return
+
+      const routeStops = plan.routeStopIds
+        .map((id) => plan.places.find((poi) => poi.id === id) ?? null)
+        .filter((poi): poi is POI => poi !== null)
+
+      setAgentPlan(plan)
+      setRouteProvider('google')
+      setSelectedIds(routeStops.map((poi) => poi.id))
+      setAllSelectedPois(routeStops)
+      setRouteGeometry(plan.route?.geometry ?? null)
+      setRouteMeta(plan.route ? { distanceMeters: plan.route.distanceMeters, durationText: plan.route.durationText } : null)
+      setActivePoi(null)
+    } catch (err) {
+      if (ctrl.signal.aborted) return
+      setPlannerError(err instanceof Error ? err.message : 'Unable to build a plan right now.')
+    } finally {
+      if (!ctrl.signal.aborted) {
+        setPlannerLoading(false)
+      }
+    }
+  }, [center])
 
   return (
     <div
@@ -107,7 +224,7 @@ function MapLayout({
           center={center}
           heading={heading}
           hasUserLocation={!!loc}
-          suggestedPois={suggestedPois}
+          suggestedPois={displayPois}
           allSelectedPois={allSelectedPois}
           selectedIds={selectedIds}
           routeGeometry={routeGeometry}
@@ -118,11 +235,18 @@ function MapLayout({
         />
         <ChatDock
           mode={mode}
-          pois={suggestedPois}
+          pois={displayPois}
           allSelectedPois={allSelectedPois}
           selectedIds={selectedIds}
           poisLoading={poisLoading}
+          plannerLoading={plannerLoading}
+          plannerError={plannerError}
+          agentPlan={agentPlan}
+          routeMeta={routeMeta}
+          isAgentPlanActive={isAgentPlanActive}
           onSelectWaypoint={handleSelectWaypoint}
+          onPlannerSubmit={handlePlannerSubmit}
+          onClearPlanner={clearAgentPlan}
         />
 
         <button

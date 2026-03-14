@@ -1,6 +1,6 @@
 # Frontend
 
-This is the React + Tailwind frontend inside `frontend/`.
+React + Tailwind frontend for PaceRoute.
 
 ## Run
 
@@ -10,3 +10,4 @@ npm install
 npm run dev
 ```
 
+The dev server proxies `/api/*` to `http://localhost:5028`, so start the ASP.NET backend from the repo root with `dotnet run` if you want the ChatGPT + Google Maps planner to work.

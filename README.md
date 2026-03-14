@@ -1,56 +1,42 @@
 # PaceRoute
 
-**Day/night-aware iterative route builder — pick cafes by day, pubs by night, and watch your route grow on the map.**
+**Location-aware route planner with two modes:**
+- **Iterative builder** for quick day/night routes from nearby cafes or pubs
+- **ChatGPT planner** for prompts like `cafes within 5km` or `historic monuments nearby`
 
-Plan a walking route around real nearby places. The app suggests the 5 closest POIs, you tap to add them to your route, and it immediately plots the walking path. Each time you add a stop, the next batch of suggestions appears near your latest waypoint so you can keep building outward. Toggle between **Day mode** (cafes) and **Night mode** (pubs) — the theme, POI type, and map style all switch together.
+The app uses the browser Geolocation API to anchor searches around the user, shows matched places on the map, and can stitch the closest results into a starter route.
 
 ---
 
 ## Features
 
-### Iterative route building
-- Suggests the **5 closest** cafes (day) or pubs (night) from your current position or last waypoint
+### ChatGPT planner
+- Natural-language prompt box in the dock
+- Sends the prompt plus current coordinates to an OpenAI planner endpoint
+- ChatGPT converts the request into a structured Google Maps search
+- Google Places Text Search returns nearby results for categories like cafes, monuments, parks, museums, and similar local activities
+- Google Routes builds a starter walking route through the closest suggested stops
+- Google Maps deep links are available from the place popup
+
+### Iterative manual builder
+- Suggests the **5 closest** cafes (day) or pubs (night)
 - Tap a suggestion in the sidebar or on the map to add it to your route
-- Route geometry updates live via OSRM (walking profile)
-- After each selection, the next 5 suggestions load from the **last waypoint's location**, so the route extends naturally
-- Unselected suggestions stay visible and tappable — backtrack at any time
+- Route geometry updates live
+- After each selection, the next 5 suggestions load from the latest waypoint
+- Unselected suggestions stay visible and tappable
 - Remove stops by tapping them in the route summary bar
 
-### Clean map experience
-- Desaturated OSM raster tiles for reduced visual noise
-- User position shown as a **directional arrow** (rotates with device heading when moving)
-- POI markers rendered as **native MapLibre symbol layers** — zero lag during pan/zoom
-- White circle markers with text labels and halo for readability
-- Compact attribution, no extra controls or overlays
-
-### Map interactions
-- **Hover** a POI on the map to see a Google Maps-style info card (name, distance, type)
-- **Click** a POI to open a detailed popup with an "Add to route" / "Remove from route" button
-- Route line drawn as a smooth emerald path under the markers
-
-### Day & night modes
-- **Day mode**: light theme, suggests cafes, warm map tones
-- **Night mode**: dark theme, suggests pubs, cooler map tones
-- Mode toggle in the top-right corner
-- Switching modes clears the current route and fetches fresh suggestions
-
-### Translucent glass UI
-- Sidebar and popups use `backdrop-filter: blur()` for a frosted glass effect
-- Sidebar is semi-transparent so the map shows through
-- Floating header with Dashboard link appears on hover over the sidebar
-
-### Dashboard (Strava-style)
-- Accessible via the floating header's "Dashboard" button or `/dashboard`
-- Shows past routes (mock data) with distance, duration, elevation
-- Top visited places grid with visit counts
+### Map experience
+- User position shown as a directional arrow
+- Hover cards and click popups for places
+- Route line drawn directly on the map
 - Day/night theme toggle
-- "Open map" button to return to the route builder
+- Dashboard route view at `/dashboard`
 
 ### Geolocation
-- Uses the browser Geolocation API with `watchPosition` for real-time updates
-- Tracks heading and speed for arrow rotation
-- Falls back to Edinburgh city center (55.9533°N, 3.1883°W) when location is unavailable
-- POIs load immediately using either real location or fallback
+- Uses `watchPosition` for live location updates
+- Falls back to Edinburgh city centre when location is unavailable
+- ChatGPT and manual search both use the same live-or-fallback origin
 
 ---
 
@@ -61,81 +47,72 @@ Plan a walking route around real nearby places. The app suggests the 5 closest P
 | Frontend | React 18 + TypeScript + Tailwind CSS 3 |
 | Bundler | Vite 6 |
 | Map rendering | MapLibre GL JS 4.7 |
-| POI data | Overpass API (OpenStreetMap) |
-| Route geometry | OSRM public API (walking profile) |
-| Location tracking | Web Geolocation API |
-| Routing | React Router DOM 6 |
-| Backend | ASP.NET Core 8.0 (C#) — stub, not yet wired |
+| AI planner | OpenAI Responses API |
+| Google search | Google Places API Text Search (New) |
+| Google routing | Google Routes API |
+| Manual POI data | Overpass API (OpenStreetMap) |
+| Manual route geometry | OSRM public API |
+| Backend | ASP.NET Core 8 minimal API |
 
 ---
 
 ## How it works
 
-### Iterative route flow
-```
-App loads → useUserLocation() watches GPS (or falls back to Edinburgh)
-         ↓
-useNearbyPOIs(center, mode) queries Overpass API
-  → "amenity=cafe" (day) or "amenity=pub" (night)
-  → within 1500m radius, sorted by Haversine distance, top 5
-         ↓
-MapView renders POI circles + labels via native MapLibre layers
-ChatDock lists the 5 suggestions with distance
-         ↓
-User taps a POI (on map or sidebar)
-  → selectedIds updated, allSelectedPois grows
-  → fetchRoute([userLocation, ...selectedPois]) via OSRM
-  → routeGeometry drawn as GeoJSON line layer
-         ↓
-queryCenter moves to last selected POI
-  → useNearbyPOIs re-fires from that new center
-  → next 5 suggestions appear (excluding already-selected)
-         ↓
-Loop continues — route grows outward from stop to stop
+### ChatGPT planner flow
+```text
+User prompt + current location
+  -> ASP.NET backend
+  -> ChatGPT converts prompt into:
+     - Google Maps query
+     - radius
+     - result count
+     - starter route stop count
+  -> Google Places returns nearby matches
+  -> Google Routes computes a starter walking route
+  -> Frontend renders places, summary, and route
 ```
 
-### Data flow
-```
-MapLayout (lifted state)
-  ├── center (user loc or fallback)
-  ├── suggestedPois (from Overpass, 5 closest)
-  ├── selectedIds + allSelectedPois (user picks)
-  ├── routeGeometry (from OSRM)
-  └── activePoi / hoverInfo (UI state)
-       │
-       ├──→ MapView (map, markers, route line, hover cards, click popup)
-       └──→ ChatDock (suggestion list, route summary, selection controls)
+### Manual builder flow
+```text
+App loads -> geolocation watches user position
+         -> Overpass fetches nearby cafes or pubs
+         -> user selects places
+         -> OSRM draws the route
+         -> query center moves to the last selected waypoint
 ```
 
 ---
 
 ## Project structure
-```
+```text
 luke-hacks/
-├── Program.cs                        # ASP.NET Core entry point (stub)
+├── Program.cs
+├── Configuration/
+│   ├── OpenAiOptions.cs
+│   └── GoogleMapsOptions.cs
+├── Models/
+│   └── DiscoveryModels.cs
+├── Services/
+│   ├── OpenAiPlanningService.cs
+│   └── GoogleMapsService.cs
+├── Properties/
+│   └── launchSettings.json
 ├── frontend/
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   ├── postcss.config.js
-│   ├── tsconfig.json
-│   └── src/
-│       ├── main.tsx                   # React entry, BrowserRouter
-│       ├── App.tsx                    # Routes, MapLayout (lifted state)
-│       ├── index.css                  # Tailwind + glass utility
-│       ├── types/
-│       │   └── map.ts                # LngLat, POI types
-│       ├── hooks/
-│       │   ├── useUserLocation.ts    # Geolocation watch + heading
-│       │   └── useNearbyPOIs.ts      # Overpass query, distance sort
-│       ├── lib/
-│       │   └── osrm.ts              # OSRM route fetch
-│       ├── components/
-│       │   ├── MapView.tsx           # MapLibre map, layers, popups
-│       │   └── ChatDock.tsx          # Sidebar with suggestions
-│       └── pages/
-│           └── Dashboard.tsx         # Strava-style dashboard
+│   ├── src/
+│   │   ├── App.tsx
+│   │   ├── components/
+│   │   │   ├── ChatDock.tsx
+│   │   │   └── MapView.tsx
+│   │   ├── hooks/
+│   │   │   ├── useNearbyPOIs.ts
+│   │   │   └── useUserLocation.ts
+│   │   ├── lib/
+│   │   │   ├── agent.ts
+│   │   │   └── osrm.ts
+│   │   └── types/
+│   │       ├── agent.ts
+│   │       └── map.ts
+│   └── vite.config.ts
 └── README.md
 ```
 
@@ -145,24 +122,51 @@ luke-hacks/
 
 ### Prerequisites
 - Node.js 18+
-- .NET 8.0 SDK (for backend stub)
+- .NET 8 SDK
+- An OpenAI API key
+- A Google Maps API key with **Places API (New)** and **Routes API** enabled
 
-### Installation
+### Install
 ```bash
-git clone https://github.com/DovydasLatkauskas/Luke-hacks.git
-cd Luke-hacks/frontend
+cd frontend
 npm install
 ```
 
-### Run locally
+### Configure keys
+
+Environment variables are the easiest option:
+
+```bash
+export OPENAI_API_KEY=your_openai_api_key
+export OPENAI_MODEL=gpt-5-mini
+export GOOGLE_MAPS_API_KEY=your_google_maps_key
+```
+
+You can also set the same values in `appsettings.Development.json`.
+
+### Run the backend
+```bash
+dotnet run
+```
+
+The backend uses `http://localhost:5028` in local development.
+
+### Run the frontend
 ```bash
 cd frontend
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser. Allow location access when prompted — or it will fall back to Edinburgh.
+Vite proxies `/api/*` requests to the backend on `http://localhost:5028`.
 
-> GPS tracking requires HTTPS in production. Chrome allows `localhost` to use the Geolocation API without SSL.
+Open `http://localhost:5173`.
+
+### Notes
+- If location access is denied, the app falls back to Edinburgh.
+- The manual day/night builder still works without API keys.
+- The ChatGPT planner requires both OpenAI and Google Maps keys.
+- GPS comes from the browser Geolocation API, so there is no separate GPS key to provide.
+- On macOS, make sure Location Services are enabled for your browser if you want the route to start from your actual laptop location.
 
 ---
 
@@ -170,26 +174,26 @@ Open `http://localhost:5173` in your browser. Allow location access when prompte
 
 | API | Purpose | Auth required |
 |---|---|---|
-| [Overpass API](https://overpass-api.de/) | Query nearby cafes/pubs from OpenStreetMap | No |
-| [OSRM](https://router.project-osrm.org/) | Walking route geometry (public demo server) | No |
-| [OpenStreetMap tiles](https://tile.openstreetmap.org/) | Raster map basemap | No |
-| [MapLibre demo glyphs](https://demotiles.maplibre.org/) | Font glyphs for map labels | No |
-
-All APIs are free and require no keys for the current implementation.
+| OpenAI Responses API | Convert natural-language prompts into structured local plans | Yes |
+| Google Places API Text Search (New) | Find nearby places from the ChatGPT-generated query | Yes |
+| Google Routes API | Build starter walking routes for ChatGPT plans | Yes |
+| Overpass API | Manual nearby cafe/pub search | No |
+| OSRM | Manual route geometry | No |
+| OpenStreetMap tiles | Basemap | No |
+| MapLibre demo glyphs | Map label glyphs | No |
 
 ---
 
 ## Roadmap
 
-- [ ] AI agent (Claude) for natural-language route requests ("easy 5k with 2 coffee stops")
-- [ ] Live GPS tracking with pace/distance stats
+- [x] ChatGPT planner for prompts like `cafes within 5km`
 - [ ] Persist routes to Supabase
 - [ ] Elevation profile on route preview
 - [ ] Export to GPX
-- [ ] Social: share routes and compare with friends
-- [ ] Heart rate zone integration (Web Bluetooth)
-- [ ] Offline mode: cache route geometry
-- [ ] Auto day/night switch based on local time
+- [ ] Social sharing
+- [ ] Heart rate zone integration
+- [ ] Offline route cache
+- [ ] Auto day/night switching based on local time
 
 ---
 

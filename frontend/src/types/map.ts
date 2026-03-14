@@ -6,4 +6,9 @@ export type POI = {
   lng: number
   name: string
   distance: number
+  address?: string | null
+  primaryType?: string | null
+  primaryTypeLabel?: string | null
+  mapsUri?: string | null
+  source?: 'osm' | 'google'
 }
