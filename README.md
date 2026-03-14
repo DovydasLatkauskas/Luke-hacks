@@ -59,8 +59,8 @@ The route agent is always available mid-run. Ask it to:
 | Route geometry | OSRM (open-source routing engine) |
 | AI agent | Claude API (claude-sonnet-4-20250514) with tool use |
 | Location tracking | Web Geolocation API |
-| Backend | Node.js + Express |
-| Auth | Clerk |
+| Backend | ASP.NET Core 8.0 (C#) |
+| Auth | ASP.NET Identity / Clerk |
 | Database | Supabase (run history, user prefs) |
 
 ---
@@ -120,7 +120,8 @@ Map updates with new geometry, ETA recalculated
 
 ### Prerequisites
 
-- Node.js 18+
+- .NET 8.0 SDK
+- Node.js 18+ (for the frontend)
 - A Mapbox account and public token
 - An Anthropic API key
 - A Google Places API key (or Overpass API for fully open-source POI data)
@@ -130,28 +131,47 @@ Map updates with new geometry, ETA recalculated
 ```bash
 git clone https://github.com/yourname/paceroute.git
 cd paceroute
+
+# Backend
+dotnet restore
+
+# Frontend
 cd frontend
 npm install
 ```
 
 ### Environment variables
 
-Create a `.env` file at the project root:
-```
-MAPBOX_TOKEN=pk.eyJ...
-ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_PLACES_KEY=AIza...
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=eyJ...
+Add the following to `appsettings.Development.json` (or user secrets):
+```json
+{
+  "Mapbox": {
+    "Token": "pk.eyJ..."
+  },
+  "Anthropic": {
+    "ApiKey": "sk-ant-..."
+  },
+  "GooglePlaces": {
+    "ApiKey": "AIza..."
+  },
+  "Supabase": {
+    "Url": "https://your-project.supabase.co",
+    "AnonKey": "eyJ..."
+  }
+}
 ```
 
 ### Run locally
 ```bash
+# Backend (from project root)
+dotnet run
+# Runs on http://localhost:5000
+
+# Frontend (separate terminal)
 cd frontend
 npm run dev
+# Runs on http://localhost:5173
 ```
-
-Open `http://localhost:5173` in your browser.
 
 > GPS tracking requires HTTPS in production. For local dev, Chrome allows `localhost` to use the Geolocation API without SSL.
 
@@ -159,34 +179,52 @@ Open `http://localhost:5173` in your browser.
 
 ## AI agent tool definitions
 
-The Claude agent has access to the following tools:
-```typescript
-search_pois(types: string[], location: LatLng, radius_km: number, time_of_day: 'day' | 'night'): POI[]
-build_route(waypoints: LatLng[], soft_target_km?: number): RouteGeometry
-get_current_conditions(location: LatLng): WeatherAndClosure
-adjust_route(from: LatLng, remaining: LatLng[], constraints: string): RouteGeometry
-estimate_finish(pace_per_km: number, remaining_km: number): string
+The Claude agent has access to the following tools, implemented as ASP.NET Core endpoints:
+
+```csharp
+// POST /api/pois/search
+Task<List<POI>> SearchPois(string[] types, LatLng location, double radiusKm, TimeOfDay timeOfDay)
+
+// POST /api/route/build
+Task<RouteGeometry> BuildRoute(LatLng[] waypoints, double? softTargetKm)
+
+// GET /api/conditions
+Task<WeatherAndClosure> GetCurrentConditions(LatLng location)
+
+// POST /api/route/adjust
+Task<RouteGeometry> AdjustRoute(LatLng from, LatLng[] remaining, string constraints)
+
+// GET /api/route/estimate-finish
+Task<string> EstimateFinish(double pacePerKm, double remainingKm)
 ```
 
-The agent uses multi-turn tool calling. The backend streams the agent's reasoning and map updates to the frontend via Server-Sent Events so the map animates as the route is built.
+The agent uses multi-turn tool calling. The backend streams the agent's reasoning and map updates to the frontend via Server-Sent Events (SSE) so the map animates as the route is built.
 
 ---
 
 ## Project structure
 ```
-Luke-hacks/
-├── frontend/                # React + Tailwind SPA (PaceRoute UI)
+luke-hacks/
+├── Program.cs               # ASP.NET Core entry point, middleware, endpoints
+├── luke-hacks.csproj        # .NET 8.0 project file
+├── appsettings.json          # App configuration
+├── appsettings.Development.json
+├── Controllers/              # API controllers (POI, Route, Agent)
+│   └── ...
+├── Services/                 # Business logic (POI search, routing, Claude agent)
+│   └── ...
+├── Models/                   # DTOs and domain models (POI, LatLng, RouteGeometry)
+│   └── ...
+├── frontend/                 # React + Tailwind SPA (PaceRoute UI)
 │   ├── index.html
 │   ├── src/
-│   │   ├── App.tsx          # Day/night modes, layout shell
+│   │   ├── App.tsx           # Day/night modes, layout shell
 │   │   ├── main.tsx
-│   │   └── index.css        # Tailwind entry + global styles
+│   │   └── index.css         # Tailwind entry + global styles
 │   ├── tailwind.config.js
 │   ├── postcss.config.js
 │   ├── tsconfig*.json
 │   └── package.json
-├── backend/                 # (planned) Node/Express, agent, routing
-│   └── ...                  # OSRM, POI search, SSE endpoints
 ├── .env
 └── README.md
 ```
