@@ -374,9 +374,43 @@ app.MapPost("/api/agent/plan", async (
     try
     {
         var intent = await planner.CreateIntentAsync(request.Prompt, request.CurrentLocation, cancellationToken);
-        var places = await googleMaps.SearchPlacesAsync(intent, request.CurrentLocation, cancellationToken);
-        var routeStops = places.Take(Math.Min(intent.RouteStopCount, places.Count)).ToList();
-        var route = await googleMaps.ComputeRouteAsync(request.CurrentLocation, routeStops, cancellationToken);
+        var places = (await googleMaps.SearchPlacesAsync(intent, request.CurrentLocation, cancellationToken)).ToList();
+        var nonDestinationStopCount = string.IsNullOrWhiteSpace(intent.FinalDestinationQuery)
+            ? intent.RouteStopCount
+            : Math.Max(0, intent.RouteStopCount - 1);
+        var routeStops = places.Take(Math.Min(nonDestinationStopCount, places.Count)).ToList();
+
+        if (!string.IsNullOrWhiteSpace(intent.FinalDestinationQuery))
+        {
+            var destinationIntent = new DiscoveryIntent(
+                intent.IntentSummary,
+                intent.FinalDestinationQuery,
+                Math.Max(intent.RadiusMeters, 5000),
+                5,
+                1,
+                intent.OpenNow,
+                intent.UserFacingPlan,
+                intent.FinalDestinationQuery,
+                intent.TargetDistanceMeters);
+
+            var destination = (await googleMaps.SearchPlacesAsync(destinationIntent, request.CurrentLocation, cancellationToken))
+                .FirstOrDefault(place => routeStops.All(stop => stop.Id != place.Id));
+
+            if (destination is not null)
+            {
+                routeStops.Add(destination);
+                if (places.All(place => place.Id != destination.Id))
+                {
+                    places.Add(destination);
+                }
+            }
+        }
+
+        var route = await googleMaps.ComputeRouteAsync(
+            request.CurrentLocation,
+            routeStops,
+            string.IsNullOrWhiteSpace(intent.FinalDestinationQuery),
+            cancellationToken);
 
         return Results.Ok(new AgentPlanResponse(
             request.Prompt,
@@ -423,7 +457,9 @@ app.MapPost("/api/agent/plan/iterative", async (
             intent.RadiusMeters,
             intent.RouteStopCount,
             intent.OpenNow,
-            intent.UserFacingPlan);
+            intent.UserFacingPlan,
+            intent.FinalDestinationQuery,
+            intent.TargetDistanceMeters);
     }
     else
     {
@@ -476,7 +512,11 @@ app.MapPost("/api/agent/plan/iterative", async (
                     null))
                 .ToList();
 
-            route = await googleMaps.ComputeRouteAsync(request.CurrentLocation, routeStops, cancellationToken);
+            route = await googleMaps.ComputeRouteAsync(
+                request.CurrentLocation,
+                routeStops,
+                string.IsNullOrWhiteSpace(session.FinalDestinationQuery),
+                cancellationToken);
         }
         else
         {
@@ -484,24 +524,69 @@ app.MapPost("/api/agent/plan/iterative", async (
                 ? request.CurrentLocation
                 : new Coordinate(selectedStops[^1].Lat, selectedStops[^1].Lng);
 
+            var hasFinalDest = !string.IsNullOrWhiteSpace(session.FinalDestinationQuery);
+            var intermediateStopsNeeded = hasFinalDest
+                ? session.RouteStopCount - 1
+                : session.RouteStopCount;
+            var isLastRound = hasFinalDest && selectedStops.Count >= intermediateStopsNeeded;
+
+            var activeQuery = isLastRound
+                ? session.FinalDestinationQuery!
+                : session.SearchQuery;
+
+            var searchRadius = session.RadiusMeters;
+            if (session.TargetDistanceMeters is > 0)
+            {
+                const double walkingFactor = 1.4;
+                var totalLegs = session.RouteStopCount + 1;
+                var straightLineDistUsed = ComputeStraightLineDistance(request.CurrentLocation, selectedStops);
+                var estimatedWalkUsed = straightLineDistUsed * walkingFactor;
+                var remainingWalkBudget = Math.Max(500, session.TargetDistanceMeters.Value - estimatedWalkUsed);
+                var remainingLegs = Math.Max(1, totalLegs - selectedStops.Count);
+                var perLegBudget = remainingWalkBudget / remainingLegs;
+                searchRadius = (int)Math.Clamp(perLegBudget / walkingFactor, 300, 20000);
+            }
+
             var searchIntent = new DiscoveryIntent(
                 session.IntentSummary,
-                session.SearchQuery,
-                session.RadiusMeters,
+                activeQuery,
+                searchRadius,
                 8,
                 session.RouteStopCount,
                 session.OpenNow,
-                session.PlanSummary);
+                session.PlanSummary,
+                isLastRound ? session.FinalDestinationQuery : null,
+                session.TargetDistanceMeters);
 
             var selectedIds = selectedStops
                 .Select(stop => stop.Id)
                 .ToHashSet(StringComparer.Ordinal);
 
-            nextOptions = (await googleMaps.SearchPlacesAsync(searchIntent, searchOrigin, cancellationToken))
+            var candidates = (await googleMaps.SearchPlacesAsync(searchIntent, searchOrigin, cancellationToken))
                 .Where(place => !selectedIds.Contains(place.Id))
-                .OrderBy(place => place.DistanceMeters)
-                .Take(5)
                 .ToList();
+
+            if (session.TargetDistanceMeters is > 0 && !isLastRound)
+            {
+                const double walkingFactor = 1.4;
+                var straightLineDistUsed = ComputeStraightLineDistance(request.CurrentLocation, selectedStops);
+                var estimatedWalkUsed = straightLineDistUsed * walkingFactor;
+                var remainingWalkBudget = session.TargetDistanceMeters.Value - estimatedWalkUsed;
+                var remainingLegs = Math.Max(1, session.RouteStopCount + 1 - selectedStops.Count);
+                var idealLegDist = remainingWalkBudget / remainingLegs / walkingFactor;
+
+                candidates = candidates
+                    .OrderBy(p => Math.Abs(p.DistanceMeters - idealLegDist))
+                    .ToList();
+            }
+            else
+            {
+                candidates = candidates
+                    .OrderBy(p => p.DistanceMeters)
+                    .ToList();
+            }
+
+            nextOptions = candidates.Take(5).ToList();
         }
 
         var remainingStops = Math.Max(0, session.RouteStopCount - selectedStops.Count);
@@ -550,7 +635,11 @@ app.MapPost("/api/google/route", async (
                 null))
             .ToList();
 
-        var route = await googleMaps.ComputeRouteAsync(request.Origin, stops, cancellationToken);
+        var route = await googleMaps.ComputeRouteAsync(
+            request.Origin,
+            stops,
+            request.ReturnToOrigin,
+            cancellationToken);
         return Results.Ok(route);
     }
     catch (InvalidOperationException ex)
@@ -573,6 +662,30 @@ using (var scope = app.Services.CreateScope())
 }
 
 await app.RunAsync();
+
+static double ComputeStraightLineDistance(Coordinate origin, IReadOnlyList<GoogleRouteWaypoint> stops)
+{
+    if (stops.Count == 0) return 0;
+
+    var total = HaversineMeters(origin.Lat, origin.Lng, stops[0].Lat, stops[0].Lng);
+    for (var i = 1; i < stops.Count; i++)
+    {
+        total += HaversineMeters(stops[i - 1].Lat, stops[i - 1].Lng, stops[i].Lat, stops[i].Lng);
+    }
+    return total;
+}
+
+static double HaversineMeters(double lat1, double lng1, double lat2, double lng2)
+{
+    const double r = 6_371_000;
+    var toRad = (double d) => d * Math.PI / 180d;
+    var dLat = toRad(lat2 - lat1);
+    var dLng = toRad(lng2 - lng1);
+    var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
+            Math.Cos(toRad(lat1)) * Math.Cos(toRad(lat2)) *
+            Math.Sin(dLng / 2) * Math.Sin(dLng / 2);
+    return r * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+}
 
 static async Task EnsureSqliteCollaborativePlanningSchemaAsync(
     AppDbContext dbContext,

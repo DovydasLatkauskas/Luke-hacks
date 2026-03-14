@@ -9,6 +9,7 @@ import { useUserLocation } from './hooks/useUserLocation'
 import { fetchRouteSegments, type RouteSegment } from './lib/osrm'
 import { AuthPage } from './pages/AuthPage'
 import { Dashboard } from './pages/Dashboard'
+import type { PlannedRoute } from './types/agent'
 import NegotiationRoom from './pages/NegotiationRoom'
 import RoundTableLobby from './pages/RoundTableLobby'
 import type { LngLat, POI } from './types/map'
@@ -37,6 +38,9 @@ function MapLayout({
   const [routeSegments, setRouteSegments] = useState<RouteSegment[]>([])
   const [activePoi, setActivePoi] = useState<POI | null>(null)
   const [ignoredIds, setIgnoredIds] = useState<string[]>([])
+  const [aiSuggestedPois, setAiSuggestedPois] = useState<POI[]>([])
+  const [aiSessionActive, setAiSessionActive] = useState(false)
+  const [mapPickedAiPoi, setMapPickedAiPoi] = useState<POI | null>(null)
 
   const routeAbortRef = useRef<AbortController | null>(null)
 
@@ -53,7 +57,8 @@ function MapLayout({
     ? { lng: lastSelectedPoi.lng, lat: lastSelectedPoi.lat }
     : center
 
-  const { pois: suggestedPois } = useNearbyPOIs(queryCenter, mode, excludeIds)
+  const { pois: manualSuggestedPois } = useNearbyPOIs(queryCenter, mode, excludeIds)
+  const suggestedPois = aiSessionActive ? aiSuggestedPois : manualSuggestedPois
 
   const clearSelections = useCallback(() => {
     setSelectedIds([])
@@ -61,6 +66,8 @@ function MapLayout({
     setRouteSegments([])
     setActivePoi(null)
     setIgnoredIds([])
+    setAiSuggestedPois([])
+    setAiSessionActive(false)
   }, [])
 
   useEffect(() => {
@@ -93,6 +100,15 @@ function MapLayout({
 
   const handleSelectWaypoint = useCallback(
     (poiId: string) => {
+      if (aiSessionActive) {
+        const aiPoi = aiSuggestedPois.find((p) => p.id === poiId)
+        if (aiPoi) {
+          setMapPickedAiPoi(aiPoi)
+          setActivePoi(null)
+          return
+        }
+      }
+
       if (selectedIds.includes(poiId)) {
         setSelectedIds((prev) => prev.filter((id) => id !== poiId))
         setAllSelectedPois((prev) => prev.filter((p) => p.id !== poiId))
@@ -105,7 +121,7 @@ function MapLayout({
 
       setActivePoi(null)
     },
-    [selectedIds, suggestedPois],
+    [selectedIds, suggestedPois, aiSessionActive, aiSuggestedPois],
   )
 
   const handleIgnoreWaypoint = useCallback(
@@ -126,6 +142,34 @@ function MapLayout({
   )
 
   const handleClosePopup = useCallback(() => setActivePoi(null), [])
+
+  const handleRouteReady = useCallback(
+    (pois: POI[], route: PlannedRoute) => {
+      setAllSelectedPois(pois)
+      setSelectedIds(pois.map((p) => p.id))
+      setIgnoredIds([])
+      setActivePoi(null)
+      setAiSuggestedPois([])
+      setAiSessionActive(false)
+
+      const coords = route.geometry.coordinates as [number, number][]
+      if (coords.length > 0) {
+        setRouteSegments([
+          { geometry: { type: 'LineString', coordinates: coords }, index: 0 },
+        ])
+      }
+    },
+    [],
+  )
+
+  const handleAiOptionsChange = useCallback((options: POI[]) => {
+    setAiSuggestedPois(options)
+  }, [])
+
+  const handleAiSessionChange = useCallback((active: boolean) => {
+    setAiSessionActive(active)
+    if (!active) setAiSuggestedPois([])
+  }, [])
 
   return (
     <div
@@ -157,9 +201,19 @@ function MapLayout({
           allSelectedPois={allSelectedPois}
           routeSegments={routeSegments}
           onRemove={handleSelectWaypoint}
+          onClearRoute={clearSelections}
         />
 
-        <ChatDock mode={mode} />
+        <ChatDock
+          mode={mode}
+          userLocation={loc}
+          onRouteReady={handleRouteReady}
+          onAiOptionsChange={handleAiOptionsChange}
+          onAiSessionChange={handleAiSessionChange}
+          onClearRoute={clearSelections}
+          mapPickedAiPoi={mapPickedAiPoi}
+          onMapPickHandled={() => setMapPickedAiPoi(null)}
+        />
 
         <button
           type="button"

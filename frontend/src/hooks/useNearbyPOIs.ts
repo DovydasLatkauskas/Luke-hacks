@@ -9,7 +9,7 @@ const OVERPASS_URLS = [
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.nchc.org.tw/api/interpreter',
 ]
-const RADIUS_M = 1500
+const RADIUS_M = 2000
 const DISPLAY_LIMIT = 5
 
 // Simple in‑memory cache of raw POI results keyed by a
@@ -131,7 +131,25 @@ export function useNearbyPOIs(
       if (cached && cached.length > 0) {
         setPois(applyFilterAndLimit(cached, exclude))
       } else {
-        setPois([])
+        // As a last‑ditch fallback, synthesise a small ring of
+        // demo POIs around the current center so the first load
+        // is never completely empty even if Overpass is down or
+        // returning no data for this location.
+        const fallbackName = mode === 'day' ? 'Cafe' : 'Pub'
+        const demo: POI[] = [0, 1, 2, 3, 4].map((i) => {
+          const dLat = (i - 2) * 0.001
+          const dLng = ((i % 3) - 1) * 0.0015
+          const lat = center.lat + dLat
+          const lng = center.lng + dLng
+          return {
+            id: `demo-${mode}-${i}`,
+            lat,
+            lng,
+            name: `${fallbackName} ${i + 1}`,
+            distance: haversineM(center, { lat, lng }),
+          }
+        })
+        setPois(applyFilterAndLimit(demo, exclude))
       }
 
       setLoading(false)

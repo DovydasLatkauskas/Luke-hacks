@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using luke_hacks.Configuration;
 using luke_hacks.Models;
 using Microsoft.Extensions.Options;
@@ -40,7 +41,17 @@ public sealed class OpenAiPlanningService
                 "You turn local outing requests into structured local search plans. " +
                 "Plan around the user's current location, keep the outing realistic, " +
                 "prefer simple category queries that work well in Google Maps, and assume the app will build a walking route. " +
-                "If the user asks for a distance, respect it. If they do not, default to a short local outing.",
+                "If the user asks for a distance, respect it. If they do not, default to a short local outing. " +
+                "IMPORTANT: If the user mentions a specific named destination or landmark (e.g. 'St Giles Cathedral', 'Arthur's Seat', a restaurant name), " +
+                "put a short Google Maps search string for it in finalDestinationQuery and use googleMapsQuery ONLY for the category of intermediate stops (e.g. 'cafes', 'pubs'). " +
+                "The app will show intermediate category stops first, then show the final destination as the last stop. " +
+                "Set routeStopCount to the TOTAL number of stops including the final destination. " +
+                "If the user mentions a target distance (e.g. '5k', '3 miles'), convert it to meters and set targetDistanceMeters. " +
+                "When targetDistanceMeters is set, choose radiusMeters and routeStopCount to make that distance achievable: " +
+                "radiusMeters should be roughly targetDistanceMeters divided by (routeStopCount + 1) divided by 1.4 (walking factor). " +
+                "For example, a 5000m route with 2 stops: radiusMeters ~ 5000/3/1.4 ~ 1200. " +
+                "routeStopCount should be 2-3 for short routes (under 5km) and 3-5 for longer routes. " +
+                "If there is no specific named destination, set finalDestinationQuery to an empty string.",
             input =
                 $"Current location: latitude {currentLocation.Lat:F6}, longitude {currentLocation.Lng:F6}. " +
                 $"User request: {prompt}",
@@ -66,6 +77,10 @@ public sealed class OpenAiPlanningService
                                 type = "string",
                                 minLength = 1,
                             },
+                            finalDestinationQuery = new
+                            {
+                                type = "string",
+                            },
                             radiusMeters = new
                             {
                                 type = "integer",
@@ -84,6 +99,12 @@ public sealed class OpenAiPlanningService
                                 minimum = 1,
                                 maximum = 5,
                             },
+                            targetDistanceMeters = new
+                            {
+                                type = "integer",
+                                minimum = 0,
+                                maximum = 30000,
+                            },
                             openNow = new
                             {
                                 type = "boolean",
@@ -98,9 +119,11 @@ public sealed class OpenAiPlanningService
                         {
                             "intentSummary",
                             "googleMapsQuery",
+                            "finalDestinationQuery",
                             "radiusMeters",
                             "maxResultCount",
                             "routeStopCount",
+                            "targetDistanceMeters",
                             "openNow",
                             "userFacingPlan",
                         },
@@ -134,7 +157,7 @@ public sealed class OpenAiPlanningService
             throw new InvalidOperationException("OpenAI returned an unreadable local plan.");
         }
 
-        return NormalizeIntent(intent);
+        return NormalizeIntent(prompt, intent);
     }
 
     private static string? ExtractOutputText(string body)
@@ -170,7 +193,7 @@ public sealed class OpenAiPlanningService
         return null;
     }
 
-    private static DiscoveryIntent NormalizeIntent(DiscoveryIntent intent)
+    private static DiscoveryIntent NormalizeIntent(string prompt, DiscoveryIntent intent)
     {
         var summary = string.IsNullOrWhiteSpace(intent.IntentSummary)
             ? "Nearby local discovery"
@@ -182,14 +205,80 @@ public sealed class OpenAiPlanningService
             ? $"Find nearby {query.ToLowerInvariant()} and stitch the closest stops into a short route."
             : intent.UserFacingPlan.Trim();
 
+        var finalDest = string.IsNullOrWhiteSpace(intent.FinalDestinationQuery)
+            ? null
+            : intent.FinalDestinationQuery.Trim();
+
+        var explicitPromptDistance = ExtractDistanceMeters(prompt);
+        int? targetDist = explicitPromptDistance
+            ?? (intent.TargetDistanceMeters is > 0
+                ? Math.Clamp(intent.TargetDistanceMeters.Value, 500, 30000)
+                : null);
+
+        var routeStopCount = Math.Clamp(intent.RouteStopCount, 1, 5);
+        if (targetDist is not null)
+        {
+            routeStopCount = targetDist.Value switch
+            {
+                <= 3000 => Math.Max(routeStopCount, 2),
+                <= 7000 => Math.Max(routeStopCount, 3),
+                <= 12000 => Math.Max(routeStopCount, 4),
+                _ => 5,
+            };
+        }
+
+        if (finalDest is not null)
+        {
+            routeStopCount = Math.Max(routeStopCount, 1);
+        }
+
+        var radiusMeters = Math.Clamp(intent.RadiusMeters, 500, 20000);
+        if (targetDist is not null)
+        {
+            const double walkingFactor = 1.3d;
+            var desiredPerLegRadius = targetDist.Value / (double)(routeStopCount + 1) / walkingFactor;
+            radiusMeters = (int)Math.Clamp(Math.Round(desiredPerLegRadius), 400, 20000);
+        }
+
         return intent with
         {
             IntentSummary = summary,
             GoogleMapsQuery = query,
-            RadiusMeters = Math.Clamp(intent.RadiusMeters, 500, 20000),
+            RadiusMeters = radiusMeters,
             MaxResultCount = Math.Clamp(intent.MaxResultCount, 3, 8),
-            RouteStopCount = Math.Clamp(intent.RouteStopCount, 1, 5),
+            RouteStopCount = routeStopCount,
             UserFacingPlan = plan,
+            FinalDestinationQuery = finalDest,
+            TargetDistanceMeters = targetDist,
         };
+    }
+
+    private static int? ExtractDistanceMeters(string prompt)
+    {
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(
+            prompt,
+            @"(?<value>\d+(?:\.\d+)?)\s*(?<unit>km|kms|kilometers?|miles?|mi|k)\b",
+            RegexOptions.IgnoreCase);
+
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var value = double.Parse(match.Groups["value"].Value, System.Globalization.CultureInfo.InvariantCulture);
+        var unit = match.Groups["unit"].Value.ToLowerInvariant();
+        var meters = unit switch
+        {
+            "k" or "km" or "kms" or "kilometer" or "kilometers" => value * 1000d,
+            "mi" or "mile" or "miles" => value * 1609.34d,
+            _ => value,
+        };
+
+        return Math.Clamp((int)Math.Round(meters), 500, 30000);
     }
 }

@@ -28,7 +28,9 @@ public sealed record IterativeRoutePlanSession(
     int RadiusMeters,
     int RouteStopCount,
     bool OpenNow,
-    string PlanSummary);
+    string PlanSummary,
+    string? FinalDestinationQuery = null,
+    int? TargetDistanceMeters = null);
 
 public sealed record IterativeRoutePlanResponse(
     IterativeRoutePlanSession Session,
@@ -45,7 +47,9 @@ public sealed record DiscoveryIntent(
     int MaxResultCount,
     int RouteStopCount,
     bool OpenNow,
-    string UserFacingPlan);
+    string UserFacingPlan,
+    string? FinalDestinationQuery = null,
+    int? TargetDistanceMeters = null);
 
 public sealed record PlaceSuggestion(
     string Id,
@@ -60,7 +64,8 @@ public sealed record PlaceSuggestion(
 
 public sealed record GoogleRouteRequest(
     Coordinate Origin,
-    IReadOnlyList<GoogleRouteWaypoint> Waypoints);
+    IReadOnlyList<GoogleRouteWaypoint> Waypoints,
+    bool ReturnToOrigin = false);
 
 public sealed record GoogleRouteWaypoint(
     string Id,

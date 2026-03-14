@@ -128,11 +128,15 @@ export function MapView({
   const hoverPoiRef = useRef<POI | null>(null)
 
   const allPoisRef = useRef<POI[]>([])
+  const hoverDismissedRef = useRef(false)
   useEffect(() => {
     allPoisRef.current = [
       ...allSelectedPois,
       ...suggestedPois.filter((p) => !selectedIds.includes(p.id)),
     ]
+    // Whenever the suggestion pool changes (e.g. new query),
+    // allow auto‑focus again.
+    hoverDismissedRef.current = false
   }, [suggestedPois, allSelectedPois, selectedIds])
 
   const projectPoi = useCallback((poi: POI): { x: number; y: number } | null => {
@@ -470,8 +474,9 @@ export function MapView({
       return
     }
 
-    // If no card is showing, pick the first unselected
-    if (!hoverPoiRef.current && unselected.length > 0) {
+    // If no card is showing and the user hasn't manually closed
+    // the current batch, pick the first unselected.
+    if (!hoverPoiRef.current && !hoverDismissedRef.current && unselected.length > 0) {
       showCardForPoi(unselected[0])
     }
   }, [suggestedPois, selectedIds, showCardForPoi])
@@ -584,17 +589,21 @@ export function MapView({
     return () => { map.off('move', updatePos) }
   }, [activePoi])
 
+  const clearHover = useCallback(() => {
+    hoverPoiRef.current = null
+    hoverDismissedRef.current = true
+    setHoverCard(null)
+  }, [])
+
   const handleAdd = useCallback((id: string) => {
     onSelectWaypoint(id)
-    hoverPoiRef.current = null
-    setHoverCard(null)
-  }, [onSelectWaypoint])
+    clearHover()
+  }, [onSelectWaypoint, clearHover])
 
   const handleIgnore = useCallback((id: string) => {
     onIgnorePoi(id)
-    hoverPoiRef.current = null
-    setHoverCard(null)
-  }, [onIgnorePoi])
+    clearHover()
+  }, [onIgnorePoi, clearHover])
 
   return (
     <div className="relative h-dvh w-screen">
@@ -619,6 +628,13 @@ export function MapView({
             style={{ minWidth: 150, maxWidth: 230 }}
           >
             <div className="text-xs font-semibold leading-snug">{hoverCard.poi.name}</div>
+            <button
+              type="button"
+              onClick={clearHover}
+              className="absolute right-1.5 top-1.5 text-[9px] opacity-40 hover:opacity-100"
+            >
+              ✕
+            </button>
             <div className="mt-0.5 flex items-center gap-1.5 text-[10px] opacity-60">
               <span>{fmtDist(hoverCard.poi.distance)}</span>
               <span>·</span>

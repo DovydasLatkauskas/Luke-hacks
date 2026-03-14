@@ -36,11 +36,17 @@ public sealed class GoogleMapsService
         CancellationToken cancellationToken)
     {
         EnsureApiKey();
+        var exactDestinationSearch =
+            !string.IsNullOrWhiteSpace(intent.FinalDestinationQuery) &&
+            string.Equals(
+                intent.GoogleMapsQuery.Trim(),
+                intent.FinalDestinationQuery.Trim(),
+                StringComparison.OrdinalIgnoreCase);
 
         var requestBody = new
         {
             textQuery = intent.GoogleMapsQuery,
-            pageSize = Math.Min(20, Math.Max(6, intent.MaxResultCount * 3)),
+            pageSize = Math.Min(20, Math.Max(8, intent.MaxResultCount * 3)),
             openNow = intent.OpenNow,
             rankPreference = "DISTANCE",
             locationBias = new
@@ -90,8 +96,11 @@ public sealed class GoogleMapsService
                     place.PrimaryTypeDisplayName?.Text,
                     place.GoogleMapsUri);
             })
-            .Where(place => place.DistanceMeters <= intent.RadiusMeters)
-            .OrderBy(place => place.DistanceMeters)
+            .Where(place => exactDestinationSearch || place.DistanceMeters <= intent.RadiusMeters)
+            .OrderByDescending(place => exactDestinationSearch
+                ? ComputeDestinationMatchScore(place, intent.FinalDestinationQuery!)
+                : 0)
+            .ThenBy(place => place.DistanceMeters)
             .Take(intent.MaxResultCount)
             .ToList();
 
@@ -101,6 +110,7 @@ public sealed class GoogleMapsService
     public async Task<RouteResponse?> ComputeRouteAsync(
         Coordinate origin,
         IReadOnlyList<PlaceSuggestion> stops,
+        bool returnToOrigin,
         CancellationToken cancellationToken)
     {
         EnsureApiKey();
@@ -110,8 +120,21 @@ public sealed class GoogleMapsService
             return null;
         }
 
-        var destination = stops[^1];
-        var intermediates = stops.Take(Math.Max(0, stops.Count - 1)).ToArray();
+        var destination = returnToOrigin
+            ? new PlaceSuggestion(
+                "origin",
+                "Current location",
+                origin.Lat,
+                origin.Lng,
+                0,
+                null,
+                null,
+                null,
+                null)
+            : stops[^1];
+        var intermediates = returnToOrigin
+            ? stops.ToArray()
+            : stops.Take(Math.Max(0, stops.Count - 1)).ToArray();
 
         var requestBody = new
         {
@@ -156,6 +179,38 @@ public sealed class GoogleMapsService
         {
             throw new InvalidOperationException("Google Maps API key is missing. Set GOOGLE_MAPS_API_KEY before using Google Maps search and routing.");
         }
+    }
+
+    private static int ComputeDestinationMatchScore(PlaceSuggestion place, string query)
+    {
+        var normalizedQuery = query.Trim();
+        if (string.Equals(place.Name.Trim(), normalizedQuery, StringComparison.OrdinalIgnoreCase))
+        {
+            return 4;
+        }
+
+        if (place.Name.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase))
+        {
+            return 3;
+        }
+
+        var tokens = normalizedQuery
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (tokens.Length > 0 &&
+            tokens.All(token => place.Name.Contains(token, StringComparison.OrdinalIgnoreCase)))
+        {
+            return 2;
+        }
+
+        if (!string.IsNullOrWhiteSpace(place.Address) &&
+            tokens.Length > 0 &&
+            tokens.All(token => place.Address.Contains(token, StringComparison.OrdinalIgnoreCase)))
+        {
+            return 1;
+        }
+
+        return 0;
     }
 
     private static object ToWaypoint(Coordinate coordinate) => new
