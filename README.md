@@ -65,7 +65,38 @@ Plan a walking route around real nearby places. The app suggests the 5 closest P
 | Route geometry | OSRM public API (walking profile) |
 | Location tracking | Web Geolocation API |
 | Routing | React Router DOM 6 |
-| Backend | ASP.NET Core 8.0 (C#) — stub, not yet wired |
+| Backend | ASP.NET Core 8.0 (C#) + SQLite |
+
+---
+
+## Backend
+
+The backend is intended to support persistent collaborative route planning rather than remain a stateless proxy.
+
+### Core requirements
+- User accounts are required so chats and routes can be owned, shared, and permissioned.
+- The application data store is SQLite.
+- We need a `Chat` object that can be shared with multiple users, so more than one person can access the same conversation.
+- Routes must be stored persistently, and each chat maps to exactly one route in a 1:1 relationship.
+
+### Suggested data model
+- `User`: account identity and profile metadata.
+- `Chat`: the shared conversation container.
+- `ChatUser`: join table for chat membership and roles.
+- `Route`: persisted route state for a chat.
+
+### Relationship rules
+- A user can belong to many chats.
+- A chat can have many users.
+- A chat has exactly one route.
+- A route belongs to exactly one chat.
+
+### Backend request flow
+1. A signed-in user submits a route-planning prompt from the frontend, for example a request for a running route that passes a set number of cafes.
+2. The frontend sends that prompt, along with the active chat context and any relevant location data, to the ASP.NET Core backend.
+3. The backend resolves the user, loads or creates the chat, and generates the route for that chat.
+4. The backend persists the data needed to reopen and share the session later, including chat membership, the chat history, and the chat's single stored route.
+5. The backend returns the route payload to the frontend so the map and chat UI can update immediately.
 
 ---
 
