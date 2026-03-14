@@ -1,5 +1,5 @@
 import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Mode } from '../App'
 import type { RouteGeometry } from '../lib/osrm'
 import type { LngLat, POI } from '../types/map'
@@ -18,6 +18,8 @@ type Props = {
   onSelectWaypoint: (id: string) => void
   onClosePopup: () => void
 }
+
+type HoverInfo = { poi: POI; x: number; y: number }
 
 function createArrowEl(): HTMLDivElement {
   const el = document.createElement('div')
@@ -46,6 +48,10 @@ function poiToGeoJSON(pois: POI[], selectedIds: string[]): GeoJSON.FeatureCollec
   }
 }
 
+function fmtDist(m: number): string {
+  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`
+}
+
 export function MapView({
   mode,
   center,
@@ -67,6 +73,16 @@ export function MapView({
   const popupRef = useRef<HTMLDivElement | null>(null)
   const skipCleanupRef = useRef(false)
   const isDay = mode === 'day'
+
+  const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null)
+
+  const allPoisRef = useRef<POI[]>([])
+  useEffect(() => {
+    allPoisRef.current = [
+      ...allSelectedPois,
+      ...suggestedPois.filter((p) => !selectedIds.includes(p.id)),
+    ]
+  }, [suggestedPois, allSelectedPois, selectedIds])
 
   // ---------- init map once ----------
   useEffect(() => {
@@ -104,7 +120,7 @@ export function MapView({
         ],
       },
       center: [center.lng, center.lat],
-      zoom: hasUserLocation ? 15 : 12,
+      zoom: hasUserLocation ? 15 : 14,
       attributionControl: false,
     })
 
@@ -116,7 +132,6 @@ export function MapView({
     map.on('load', () => {
       map.resize()
 
-      // Route line source + layer
       map.addSource('route-line', {
         type: 'geojson',
         data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} },
@@ -129,27 +144,24 @@ export function MapView({
         layout: { 'line-cap': 'round', 'line-join': 'round' },
       })
 
-      // POI source (suggested + selected combined)
       map.addSource('pois', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       })
 
-      // POI circles
       map.addLayer({
         id: 'poi-circles',
         type: 'circle',
         source: 'pois',
         paint: {
-          'circle-radius': 6,
+          'circle-radius': 7,
           'circle-color': ['case', ['==', ['get', 'selected'], 1], '#059669', '#ffffff'],
-          'circle-stroke-width': 2,
-          'circle-stroke-color': ['case', ['==', ['get', 'selected'], 1], '#059669', '#94a3b8'],
-          'circle-opacity': ['case', ['==', ['get', 'selected'], 1], 1, 0.7],
+          'circle-stroke-width': 2.5,
+          'circle-stroke-color': ['case', ['==', ['get', 'selected'], 1], '#047857', '#94a3b8'],
+          'circle-opacity': ['case', ['==', ['get', 'selected'], 1], 1, 0.85],
         },
       })
 
-      // POI text labels — white pill
       map.addLayer({
         id: 'poi-labels',
         type: 'symbol',
@@ -158,7 +170,7 @@ export function MapView({
           'text-field': ['get', 'name'],
           'text-font': ['Open Sans Semibold'],
           'text-size': 11,
-          'text-offset': [0, 1.6],
+          'text-offset': [0, 1.8],
           'text-anchor': 'top',
           'text-max-width': 12,
           'text-allow-overlap': false,
@@ -167,30 +179,37 @@ export function MapView({
           'text-color': '#1e293b',
           'text-halo-color': '#ffffff',
           'text-halo-width': 2,
-          'text-opacity': ['case', ['==', ['get', 'selected'], 1], 1, 0.6],
+          'text-opacity': ['case', ['==', ['get', 'selected'], 1], 1, 0.65],
         },
       })
 
-      // Click on POI circles
       map.on('click', 'poi-circles', (e) => {
         const feat = e.features?.[0]
         if (feat?.properties?.id) {
           onPoiTap(feat.properties.id)
+          setHoverInfo(null)
         }
       })
 
-      // Cursor pointer on POI hover
-      map.on('mouseenter', 'poi-circles', () => {
+      map.on('mouseenter', 'poi-circles', (e) => {
         map.getCanvas().style.cursor = 'pointer'
+        const feat = e.features?.[0]
+        if (!feat?.properties?.id) return
+        const poi = allPoisRef.current.find((p) => p.id === feat.properties!.id)
+        if (poi) {
+          const pt = map.project([poi.lng, poi.lat])
+          setHoverInfo({ poi, x: pt.x, y: pt.y })
+        }
       })
+
       map.on('mouseleave', 'poi-circles', () => {
         map.getCanvas().style.cursor = ''
+        setHoverInfo(null)
       })
     })
 
     map.on('error', (e) => console.error('[MapView]', e?.error || e))
 
-    // User arrow marker
     const arrowEl = createArrowEl()
     arrowElRef.current = arrowEl
     const userMarker = new maplibregl.Marker({ element: arrowEl, anchor: 'center' })
@@ -260,7 +279,7 @@ export function MapView({
     src.setData(poiToGeoJSON(combinedPois, selectedIds))
   }, [suggestedPois, allSelectedPois, selectedIds])
 
-  // ---------- position popup near active POI ----------
+  // ---------- position click popup near active POI ----------
   useEffect(() => {
     if (!activePoi || !mapRef.current || !popupRef.current) return
     const map = mapRef.current
@@ -278,7 +297,38 @@ export function MapView({
     <div className="relative h-dvh w-screen">
       <div ref={containerRef} className="absolute inset-0 h-full w-full" />
 
-      {/* Glassy popup on POI click */}
+      {/* Hover info card — Google Maps style */}
+      {hoverInfo && !activePoi && (
+        <div
+          className="pointer-events-none absolute left-0 top-0 z-20"
+          style={{
+            transform: `translate(${hoverInfo.x}px, ${hoverInfo.y - 12}px)`,
+            willChange: 'transform',
+          }}
+        >
+          <div
+            className={[
+              'glass -translate-x-1/2 -translate-y-full rounded-xl border px-3 py-2 shadow-[0_8px_30px_rgba(0,0,0,0.25)]',
+              isDay
+                ? 'border-slate-200 bg-white/80 text-slate-900'
+                : 'border-white/15 bg-slate-900/80 text-slate-100',
+            ].join(' ')}
+            style={{ minWidth: 140, maxWidth: 220 }}
+          >
+            <div className="text-xs font-semibold leading-snug">{hoverInfo.poi.name}</div>
+            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] opacity-60">
+              <span>{fmtDist(hoverInfo.poi.distance)}</span>
+              <span>·</span>
+              <span>{isDay ? 'Cafe' : 'Pub'}</span>
+            </div>
+            {selectedIds.includes(hoverInfo.poi.id) && (
+              <div className="mt-1 text-[10px] font-semibold text-emerald-600">On your route</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Click popup — detailed card with action */}
       {activePoi && (
         <div
           ref={popupRef}
@@ -289,10 +339,10 @@ export function MapView({
             className={[
               'glass -translate-x-1/2 -translate-y-full rounded-2xl border p-3 shadow-[0_12px_40px_rgba(0,0,0,0.3)]',
               isDay
-                ? 'border-slate-900/10 bg-white/60 text-slate-900'
-                : 'border-white/10 bg-slate-900/60 text-slate-100',
+                ? 'border-slate-200 bg-white/70 text-slate-900'
+                : 'border-white/10 bg-slate-900/70 text-slate-100',
             ].join(' ')}
-            style={{ minWidth: 180, maxWidth: 260 }}
+            style={{ minWidth: 190, maxWidth: 270 }}
           >
             <div className="mb-1 flex items-start justify-between gap-2">
               <span className="text-sm font-semibold leading-tight">{activePoi.name}</span>
@@ -304,10 +354,8 @@ export function MapView({
                 ✕
               </button>
             </div>
-            <div className="mb-2 text-[11px] opacity-60">
-              {activePoi.distance < 1000
-                ? `${Math.round(activePoi.distance)} m away`
-                : `${(activePoi.distance / 1000).toFixed(1)} km away`}
+            <div className="mb-2.5 text-[11px] opacity-60">
+              {fmtDist(activePoi.distance)}
               {' · '}{isDay ? 'Cafe' : 'Pub'}
             </div>
             <button

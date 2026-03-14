@@ -33,9 +33,9 @@ function MapLayout({
   const lastSelectedPoi = allSelectedPois.length > 0
     ? allSelectedPois[allSelectedPois.length - 1]
     : null
-  const queryCenter: LngLat | null = lastSelectedPoi
+  const queryCenter: LngLat = lastSelectedPoi
     ? { lng: lastSelectedPoi.lng, lat: lastSelectedPoi.lat }
-    : loc
+    : center
 
   const { pois: suggestedPois, loading: poisLoading } = useNearbyPOIs(queryCenter, mode, excludeIds)
 

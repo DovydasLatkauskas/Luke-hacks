@@ -1,51 +1,56 @@
-# Luke-hacks
-
 # PaceRoute
 
-**AI-powered, day/night-aware route builder with real-time tracking and pace analytics.**
+**Day/night-aware iterative route builder — pick cafes by day, pubs by night, and watch your route grow on the map.**
 
-Plan a running or night-out route around cafes, pubs, monuments, or any landmark type. An AI agent keeps suggesting new waypoints that you can selectively add, so you iteratively build the route together — with distinct **Day (dark mode)** and **Night (night mode)** themes that match the activity and time.
+Plan a walking route around real nearby places. The app suggests the 5 closest POIs, you tap to add them to your route, and it immediately plots the walking path. Each time you add a stop, the next batch of suggestions appears near your latest waypoint so you can keep building outward. Toggle between **Day mode** (cafes) and **Night mode** (pubs) — the theme, POI type, and map style all switch together.
 
 ---
 
 ## Features
 
-### Route planning
-- Start with a loose goal (e.g. "easy 5k coffee loop" or "Friday night bar hop")
-- Choose landmark categories — cafes, pubs, parks, monuments, bookshops, viewpoints, and more
-- AI agent proposes candidate waypoints (POIs) one batch at a time
-- You accept or reject suggestions to iteratively build up the route geometry
-- Route updates live on the map as you add waypoints
-- Keep querying the agent mid-planning (e.g. "add one more park", "avoid big hills", "stay near the river")
+### Iterative route building
+- Suggests the **5 closest** cafes (day) or pubs (night) from your current position or last waypoint
+- Tap a suggestion in the sidebar or on the map to add it to your route
+- Route geometry updates live via OSRM (walking profile)
+- After each selection, the next 5 suggestions load from the **last waypoint's location**, so the route extends naturally
+- Unselected suggestions stay visible and tappable — backtrack at any time
+- Remove stops by tapping them in the route summary bar
+
+### Clean map experience
+- Desaturated OSM raster tiles for reduced visual noise
+- User position shown as a **directional arrow** (rotates with device heading when moving)
+- POI markers rendered as **native MapLibre symbol layers** — zero lag during pan/zoom
+- White circle markers with text labels and halo for readability
+- Compact attribution, no extra controls or overlays
+
+### Map interactions
+- **Hover** a POI on the map to see a Google Maps-style info card (name, distance, type)
+- **Click** a POI to open a detailed popup with an "Add to route" / "Remove from route" button
+- Route line drawn as a smooth emerald path under the markers
 
 ### Day & night modes
-- Day **dark mode** for runs, walks, and daytime exploration
-- Night **night mode** tuned for low-light viewing on evenings out
-- Mode influences suggested POI types (e.g. more bars at night, more parks/cafes by day)
-- Theme can auto-switch based on local time or be manually toggled
+- **Day mode**: light theme, suggests cafes, warm map tones
+- **Night mode**: dark theme, suggests pubs, cooler map tones
+- Mode toggle in the top-right corner
+- Switching modes clears the current route and fetches fresh suggestions
 
-### Live tracking
-- GPS tracking starts when you begin your run
-- Your position updates on the map in real time
-- Progress indicator shows distance covered vs. total route distance
-- Upcoming landmark callouts appear as you approach each stop
+### Translucent glass UI
+- Sidebar and popups use `backdrop-filter: blur()` for a frosted glass effect
+- Sidebar is semi-transparent so the map shows through
+- Floating header with Dashboard link appears on hover over the sidebar
 
-### Pace & stats (Strava-style)
-| Metric | Description |
-|---|---|
-| Current pace | min/km updated every 5 seconds |
-| Average pace | rolling average for the whole run |
-| Distance | GPS-derived, in km |
-| Elapsed time | live timer from run start |
-| Estimated finish | based on current average pace |
-| Split history | per-km breakdown shown post-run |
+### Dashboard (Strava-style)
+- Accessible via the floating header's "Dashboard" button or `/dashboard`
+- Shows past routes (mock data) with distance, duration, elevation
+- Top visited places grid with visit counts
+- Day/night theme toggle
+- "Open map" button to return to the route builder
 
-### AI agent
-The route agent is always available mid-run. Ask it to:
-- Re-route around a blocked road or bad weather
-- Extend or shorten the remaining route
-- Find the nearest cafe if you want to stop early
-- Explain why it chose a particular path
+### Geolocation
+- Uses the browser Geolocation API with `watchPosition` for real-time updates
+- Tracks heading and speed for arrow rotation
+- Falls back to Edinburgh city center (55.9533°N, 3.1883°W) when location is unavailable
+- POIs load immediately using either real location or fallback
 
 ---
 
@@ -53,65 +58,85 @@ The route agent is always available mid-run. Ask it to:
 
 | Layer | Technology |
 |---|---|
-| Frontend | React + Tailwind CSS |
-| Map rendering | Mapbox GL JS |
-| POI data | Google Places API / Overpass API (OpenStreetMap) |
-| Route geometry | OSRM (open-source routing engine) |
-| AI agent | Claude API (claude-sonnet-4-20250514) with tool use |
+| Frontend | React 18 + TypeScript + Tailwind CSS 3 |
+| Bundler | Vite 6 |
+| Map rendering | MapLibre GL JS 4.7 |
+| POI data | Overpass API (OpenStreetMap) |
+| Route geometry | OSRM public API (walking profile) |
 | Location tracking | Web Geolocation API |
-| Backend | ASP.NET Core 8.0 (C#) |
-| Auth | ASP.NET Identity / Clerk |
-| Database | Supabase (run history, user prefs) |
+| Routing | React Router DOM 6 |
+| Backend | ASP.NET Core 8.0 (C#) — stub, not yet wired |
 
 ---
 
 ## How it works
 
-### 1. Iterative route generation
+### Iterative route flow
 ```
-User: mode = "Day", intent = "easy 5k with 2 coffee stops"
+App loads → useUserLocation() watches GPS (or falls back to Edinburgh)
          ↓
-AI agent calls: search_pois(types=["cafe", "park"], location=userLocation, radius_km=4)
+useNearbyPOIs(center, mode) queries Overpass API
+  → "amenity=cafe" (day) or "amenity=pub" (night)
+  → within 1500m radius, sorted by Haversine distance, top 5
          ↓
-Agent scores POIs by rating, detour cost, clustering, and time-of-day
+MapView renders POI circles + labels via native MapLibre layers
+ChatDock lists the 5 suggestions with distance
          ↓
-Frontend shows suggested waypoints in a list + on the map
+User taps a POI (on map or sidebar)
+  → selectedIds updated, allSelectedPois grows
+  → fetchRoute([userLocation, ...selectedPois]) via OSRM
+  → routeGeometry drawn as GeoJSON line layer
          ↓
-User picks a subset of waypoints to add to the route
+queryCenter moves to last selected POI
+  → useNearbyPOIs re-fires from that new center
+  → next 5 suggestions appear (excluding already-selected)
          ↓
-Agent calls: build_route(waypoints=[selected...], soft_target_km≈5)
-         ↓
-Map updates with new geometry
-         ↓
-User can keep querying ("add one more cafe", "avoid this hill") to get more candidates
-         ↓
-Loop continues until the user is happy with the route
-```
-
-### 2. Live tracking loop
-```
-Browser Geolocation API (1-second updates)
-         ↓
-position → distance calculation (Haversine) → pace derivation
-         ↓
-Map marker updates, progress bar updates, stats panel updates
-         ↓
-Geofence check: within 80m of next waypoint?
-   Yes → mark waypoint complete, notify user
-   No  → continue tracking
+Loop continues — route grows outward from stop to stop
 ```
 
-### 3. Mid-run rerouting
+### Data flow
 ```
-User: "Can we skip the hill and add a pub stop?"
-         ↓
-Agent receives: current_position, remaining_waypoints, original_route
-         ↓
-Agent calls: search_pois(type="pub", near=current_position, within_route=true)
-         ↓
-Agent calls: build_route(from=current_position, waypoints=[new_set])
-         ↓
-Map updates with new geometry, ETA recalculated
+MapLayout (lifted state)
+  ├── center (user loc or fallback)
+  ├── suggestedPois (from Overpass, 5 closest)
+  ├── selectedIds + allSelectedPois (user picks)
+  ├── routeGeometry (from OSRM)
+  └── activePoi / hoverInfo (UI state)
+       │
+       ├──→ MapView (map, markers, route line, hover cards, click popup)
+       └──→ ChatDock (suggestion list, route summary, selection controls)
+```
+
+---
+
+## Project structure
+```
+luke-hacks/
+├── Program.cs                        # ASP.NET Core entry point (stub)
+├── frontend/
+│   ├── index.html
+│   ├── package.json
+│   ├── vite.config.ts
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   ├── tsconfig.json
+│   └── src/
+│       ├── main.tsx                   # React entry, BrowserRouter
+│       ├── App.tsx                    # Routes, MapLayout (lifted state)
+│       ├── index.css                  # Tailwind + glass utility
+│       ├── types/
+│       │   └── map.ts                # LngLat, POI types
+│       ├── hooks/
+│       │   ├── useUserLocation.ts    # Geolocation watch + heading
+│       │   └── useNearbyPOIs.ts      # Overpass query, distance sort
+│       ├── lib/
+│       │   └── osrm.ts              # OSRM route fetch
+│       ├── components/
+│       │   ├── MapView.tsx           # MapLibre map, layers, popups
+│       │   └── ChatDock.tsx          # Sidebar with suggestions
+│       └── pages/
+│           └── Dashboard.tsx         # Strava-style dashboard
+└── README.md
 ```
 
 ---
@@ -119,139 +144,52 @@ Map updates with new geometry, ETA recalculated
 ## Getting started
 
 ### Prerequisites
-
-- .NET 8.0 SDK
-- Node.js 18+ (for the frontend)
-- A Mapbox account and public token
-- An Anthropic API key
-- A Google Places API key (or Overpass API for fully open-source POI data)
-- Supabase project (for run history)
+- Node.js 18+
+- .NET 8.0 SDK (for backend stub)
 
 ### Installation
 ```bash
-git clone https://github.com/yourname/paceroute.git
-cd paceroute
-
-# Backend
-dotnet restore
-
-# Frontend
-cd frontend
+git clone https://github.com/DovydasLatkauskas/Luke-hacks.git
+cd Luke-hacks/frontend
 npm install
-```
-
-### Environment variables
-
-Add the following to `appsettings.Development.json` (or user secrets):
-```json
-{
-  "Mapbox": {
-    "Token": "pk.eyJ..."
-  },
-  "Anthropic": {
-    "ApiKey": "sk-ant-..."
-  },
-  "GooglePlaces": {
-    "ApiKey": "AIza..."
-  },
-  "Supabase": {
-    "Url": "https://your-project.supabase.co",
-    "AnonKey": "eyJ..."
-  }
-}
 ```
 
 ### Run locally
 ```bash
-# Backend (from project root)
-dotnet run
-# Runs on http://localhost:5000
-
-# Frontend (separate terminal)
 cd frontend
 npm run dev
-# Runs on http://localhost:5173
 ```
 
-> GPS tracking requires HTTPS in production. For local dev, Chrome allows `localhost` to use the Geolocation API without SSL.
+Open `http://localhost:5173` in your browser. Allow location access when prompted — or it will fall back to Edinburgh.
+
+> GPS tracking requires HTTPS in production. Chrome allows `localhost` to use the Geolocation API without SSL.
 
 ---
 
-## AI agent tool definitions
+## External APIs used
 
-The Claude agent has access to the following tools, implemented as ASP.NET Core endpoints:
+| API | Purpose | Auth required |
+|---|---|---|
+| [Overpass API](https://overpass-api.de/) | Query nearby cafes/pubs from OpenStreetMap | No |
+| [OSRM](https://router.project-osrm.org/) | Walking route geometry (public demo server) | No |
+| [OpenStreetMap tiles](https://tile.openstreetmap.org/) | Raster map basemap | No |
+| [MapLibre demo glyphs](https://demotiles.maplibre.org/) | Font glyphs for map labels | No |
 
-```csharp
-// POST /api/pois/search
-Task<List<POI>> SearchPois(string[] types, LatLng location, double radiusKm, TimeOfDay timeOfDay)
-
-// POST /api/route/build
-Task<RouteGeometry> BuildRoute(LatLng[] waypoints, double? softTargetKm)
-
-// GET /api/conditions
-Task<WeatherAndClosure> GetCurrentConditions(LatLng location)
-
-// POST /api/route/adjust
-Task<RouteGeometry> AdjustRoute(LatLng from, LatLng[] remaining, string constraints)
-
-// GET /api/route/estimate-finish
-Task<string> EstimateFinish(double pacePerKm, double remainingKm)
-```
-
-The agent uses multi-turn tool calling. The backend streams the agent's reasoning and map updates to the frontend via Server-Sent Events (SSE) so the map animates as the route is built.
-
----
-
-## Project structure
-```
-luke-hacks/
-├── Program.cs               # ASP.NET Core entry point, middleware, endpoints
-├── luke-hacks.csproj        # .NET 8.0 project file
-├── appsettings.json          # App configuration
-├── appsettings.Development.json
-├── Controllers/              # API controllers (POI, Route, Agent)
-│   └── ...
-├── Services/                 # Business logic (POI search, routing, Claude agent)
-│   └── ...
-├── Models/                   # DTOs and domain models (POI, LatLng, RouteGeometry)
-│   └── ...
-├── frontend/                 # React + Tailwind SPA (PaceRoute UI)
-│   ├── index.html
-│   ├── src/
-│   │   ├── App.tsx           # Day/night modes, layout shell
-│   │   ├── main.tsx
-│   │   └── index.css         # Tailwind entry + global styles
-│   ├── tailwind.config.js
-│   ├── postcss.config.js
-│   ├── tsconfig*.json
-│   └── package.json
-├── .env
-└── README.md
-```
+All APIs are free and require no keys for the current implementation.
 
 ---
 
 ## Roadmap
 
-- [ ] Elevation profile on the route preview
-- [ ] Heart rate zone integration (Web Bluetooth / Garmin Connect)
-- [ ] Social: share routes and compare runs with friends
-- [ ] Offline mode: cache route geometry for no-signal areas
-- [ ] Apple Watch / Wear OS companion app
-- [ ] Route templates: "best coffee loop in Edinburgh", "canal towpath 10k"
-- [ ] Export to GPX / import into Garmin, Wahoo
-
----
-
-## Privacy
-
-Location data is used only for live tracking during an active run and is never sold or shared with third parties. Run history is stored in your personal Supabase instance. You can delete all data from the settings page at any time.
-
----
-
-## Contributing
-
-Pull requests are welcome. For large changes, open an issue first to discuss what you want to change. Please make sure all new agent tools have unit tests.
+- [ ] AI agent (Claude) for natural-language route requests ("easy 5k with 2 coffee stops")
+- [ ] Live GPS tracking with pace/distance stats
+- [ ] Persist routes to Supabase
+- [ ] Elevation profile on route preview
+- [ ] Export to GPX
+- [ ] Social: share routes and compare with friends
+- [ ] Heart rate zone integration (Web Bluetooth)
+- [ ] Offline mode: cache route geometry
+- [ ] Auto day/night switch based on local time
 
 ---
 
