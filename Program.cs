@@ -127,6 +127,131 @@ app.MapPost("/api/agent/plan", async (
 .WithName("PlanLocalDiscovery")
 .WithOpenApi();
 
+app.MapPost("/api/agent/plan/iterative", async (
+    IterativeRoutePlanRequest request,
+    OpenAiPlanningService planner,
+    GoogleMapsService googleMaps,
+    CancellationToken cancellationToken) =>
+{
+    var selectedStops = request.SelectedStops ?? [];
+    IterativeRoutePlanSession session;
+
+    if (request.Session is null)
+    {
+        if (string.IsNullOrWhiteSpace(request.Prompt))
+        {
+            return Results.BadRequest(new { error = "Prompt is required when starting iterative planning." });
+        }
+
+        var intent = await planner.CreateIntentAsync(request.Prompt, request.CurrentLocation, cancellationToken);
+        session = new IterativeRoutePlanSession(
+            intent.IntentSummary,
+            intent.GoogleMapsQuery,
+            intent.RadiusMeters,
+            intent.RouteStopCount,
+            intent.OpenNow,
+            intent.UserFacingPlan);
+    }
+    else
+    {
+        var query = string.IsNullOrWhiteSpace(request.Session.SearchQuery)
+            ? "cafes"
+            : request.Session.SearchQuery.Trim();
+        var summary = string.IsNullOrWhiteSpace(request.Session.IntentSummary)
+            ? "Nearby local discovery"
+            : request.Session.IntentSummary.Trim();
+        var planSummary = string.IsNullOrWhiteSpace(request.Session.PlanSummary)
+            ? $"Build a local route around {query.ToLowerInvariant()}."
+            : request.Session.PlanSummary.Trim();
+
+        session = request.Session with
+        {
+            SearchQuery = query,
+            IntentSummary = summary,
+            PlanSummary = planSummary,
+            RadiusMeters = Math.Clamp(request.Session.RadiusMeters, 500, 20000),
+            RouteStopCount = Math.Clamp(request.Session.RouteStopCount, 1, 5),
+        };
+    }
+
+    if (selectedStops.Count > session.RouteStopCount)
+    {
+        return Results.BadRequest(new
+        {
+            error = $"Selected stops ({selectedStops.Count}) exceed the target stop count ({session.RouteStopCount}).",
+        });
+    }
+
+    try
+    {
+        var isComplete = selectedStops.Count >= session.RouteStopCount;
+        RouteResponse? route = null;
+        IReadOnlyList<PlaceSuggestion> nextOptions = [];
+
+        if (isComplete)
+        {
+            var routeStops = selectedStops
+                .Select(stop => new PlaceSuggestion(
+                    stop.Id,
+                    stop.Name,
+                    stop.Lat,
+                    stop.Lng,
+                    0,
+                    null,
+                    null,
+                    null,
+                    null))
+                .ToList();
+
+            route = await googleMaps.ComputeRouteAsync(request.CurrentLocation, routeStops, cancellationToken);
+        }
+        else
+        {
+            var searchOrigin = selectedStops.Count == 0
+                ? request.CurrentLocation
+                : new Coordinate(selectedStops[^1].Lat, selectedStops[^1].Lng);
+
+            var searchIntent = new DiscoveryIntent(
+                session.IntentSummary,
+                session.SearchQuery,
+                session.RadiusMeters,
+                8,
+                session.RouteStopCount,
+                session.OpenNow,
+                session.PlanSummary);
+
+            var selectedIds = selectedStops
+                .Select(stop => stop.Id)
+                .ToHashSet(StringComparer.Ordinal);
+
+            nextOptions = (await googleMaps.SearchPlacesAsync(searchIntent, searchOrigin, cancellationToken))
+                .Where(place => !selectedIds.Contains(place.Id))
+                .OrderBy(place => place.DistanceMeters)
+                .Take(5)
+                .ToList();
+        }
+
+        var remainingStops = Math.Max(0, session.RouteStopCount - selectedStops.Count);
+        return Results.Ok(new IterativeRoutePlanResponse(
+            session,
+            nextOptions,
+            selectedStops,
+            isComplete,
+            remainingStops,
+            route));
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (HttpRequestException ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status502BadGateway);
+    }
+})
+.WithName("PlanLocalDiscoveryIterative")
+.WithOpenApi();
+
 app.MapPost("/api/google/route", async (
     GoogleRouteRequest request,
     GoogleMapsService googleMaps,

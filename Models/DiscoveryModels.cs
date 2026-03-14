@@ -16,6 +16,28 @@ public sealed record AgentPlanResponse(
     IReadOnlyList<string> RouteStopIds,
     RouteResponse? Route);
 
+public sealed record IterativeRoutePlanRequest(
+    string? Prompt,
+    Coordinate CurrentLocation,
+    IterativeRoutePlanSession? Session,
+    IReadOnlyList<GoogleRouteWaypoint> SelectedStops);
+
+public sealed record IterativeRoutePlanSession(
+    string IntentSummary,
+    string SearchQuery,
+    int RadiusMeters,
+    int RouteStopCount,
+    bool OpenNow,
+    string PlanSummary);
+
+public sealed record IterativeRoutePlanResponse(
+    IterativeRoutePlanSession Session,
+    IReadOnlyList<PlaceSuggestion> NextOptions,
+    IReadOnlyList<GoogleRouteWaypoint> SelectedStops,
+    bool IsComplete,
+    int RemainingStops,
+    RouteResponse? Route);
+
 public sealed record DiscoveryIntent(
     string IntentSummary,
     string GoogleMapsQuery,
