@@ -279,6 +279,45 @@ collaborativePlanningGroup.MapPost("/chats/{chatId:guid}/veto", async (
 .WithName("SubmitCollaborativePlanningVeto")
 .WithOpenApi();
 
+collaborativePlanningGroup.MapPost("/chats/{chatId:guid}/feedback", async (
+    Guid chatId,
+    SubmitCollaborativePlanningFeedbackRequest request,
+    ClaimsPrincipal user,
+    UserManager<ApplicationUser> userManager,
+    CollaborativePlanningService collaborativePlanning,
+    CancellationToken cancellationToken) =>
+{
+    var currentUser = await userManager.GetUserAsync(user);
+    if (currentUser is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        await collaborativePlanning.SubmitFeedbackAsync(chatId, currentUser.Id, request.Text, cancellationToken);
+        return Results.Ok(new { ok = true });
+    }
+    catch (KeyNotFoundException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+    catch (UnauthorizedAccessException ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
+    }
+})
+.WithName("SubmitCollaborativePlanningFeedback")
+.WithOpenApi();
+
 collaborativePlanningGroup.MapGet("/chats/{chatId:guid}/stream", async (
     Guid chatId,
     long? afterEventId,

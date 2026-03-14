@@ -10,6 +10,7 @@ import session_store
 from models import (
     CreateSessionRequest,
     CreateSessionResponse,
+    FeedbackRequest,
     JoinRequest,
     JoinResponse,
     SessionStatusResponse,
@@ -19,6 +20,8 @@ from runner import run_negotiation
 
 # asyncio.Event per session to signal "all joined"
 _ready_events: dict[str, asyncio.Event] = {}
+# asyncio.Event per session to signal "feedback received, continue negotiation"
+_feedback_events: dict[str, asyncio.Event] = {}
 
 
 @asynccontextmanager
@@ -109,7 +112,9 @@ async def stream_session(session_id: str, user_id: str = ""):
 
             session.started = True
             session.round = 1
-            async for ev in run_negotiation(session):
+            # Create feedback event for this session
+            _feedback_events[session_id] = asyncio.Event()
+            async for ev in run_negotiation(session, _feedback_events.get(session_id)):
                 yield {"event": ev["event"], "data": ev["data"]}
         else:
             # Follow live: poll message_history for new events
@@ -127,6 +132,28 @@ async def stream_session(session_id: str, user_id: str = ""):
     )
 
 
+@app.post("/roundtable/session/{session_id}/feedback")
+async def submit_feedback(session_id: str, req: FeedbackRequest):
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found")
+    if session.phase != "feedback":
+        raise HTTPException(409, "Not currently accepting feedback")
+
+    session.feedback.append({
+        "user_id": req.user_id,
+        "text": req.text,
+        "round": session.round,
+    })
+
+    # Signal the runner to continue to the next round
+    event = _feedback_events.get(session_id)
+    if event:
+        event.set()
+
+    return {"ok": True}
+
+
 @app.post("/roundtable/session/{session_id}/veto")
 async def veto_session(session_id: str, req: VetoRequest):
     session = session_store.get_session(session_id)
@@ -136,11 +163,10 @@ async def veto_session(session_id: str, req: VetoRequest):
         raise HTTPException(409, "No result to veto yet")
     if session.veto_count >= 3:
         raise HTTPException(409, "Maximum vetoes reached")
-    if session.round >= 3:
-        raise HTTPException(409, "Maximum rounds reached")
 
     session.veto_reasons.append(req.reason)
     session.veto_count += 1
+    session.round = 1  # reset round counter for fresh negotiation
     session.phase = "proposals"
     session.started = True  # keep started so stream poll picks up new events
 
@@ -153,5 +179,6 @@ async def _run_veto(session_id: str) -> None:
     session = session_store.get_session(session_id)
     if session is None:
         return
-    async for _ in run_negotiation(session):
+    _feedback_events[session_id] = asyncio.Event()
+    async for _ in run_negotiation(session, _feedback_events.get(session_id)):
         pass  # events are stored in message_history; SSE poll picks them up

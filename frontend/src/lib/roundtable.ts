@@ -88,6 +88,19 @@ export async function getSession(chatId: string): Promise<SessionStatus> {
   return parseJsonResponse<SessionStatus>(res)
 }
 
+export async function submitFeedback(chatId: string, text: string): Promise<void> {
+  const res = await fetch(`${BASE}/chats/${chatId}/feedback`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ text }),
+  })
+
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(body || 'Failed to submit feedback.')
+  }
+}
+
 export async function submitVeto(chatId: string, reason: string): Promise<void> {
   const res = await fetch(`${BASE}/chats/${chatId}/veto`, {
     method: 'POST',

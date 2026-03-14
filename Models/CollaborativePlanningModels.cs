@@ -112,6 +112,9 @@ public sealed record SubmitCollaborativePlanningConstraintsRequest(
 public sealed record SubmitCollaborativePlanningVetoRequest(
     string Reason);
 
+public sealed record SubmitCollaborativePlanningFeedbackRequest(
+    string Text);
+
 public sealed record CollaborativePlanningParticipantResponse(
     string UserId,
     string? Email,

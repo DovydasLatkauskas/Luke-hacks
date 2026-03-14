@@ -97,6 +97,36 @@ public sealed class RoundtableEngineClient
                 : message);
     }
 
+    public async Task SubmitFeedbackAsync(
+        string sessionId,
+        string userId,
+        string text,
+        CancellationToken cancellationToken)
+    {
+        var url = BuildAbsoluteUrl($"/roundtable/session/{sessionId}/feedback");
+        var response = await _httpClient.PostAsJsonAsync(
+            url,
+            new
+            {
+                user_id = userId,
+                text,
+            },
+            cancellationToken);
+
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        var message = ExtractErrorMessage(body);
+        throw new RoundtableEngineException(
+            (int)response.StatusCode,
+            string.IsNullOrWhiteSpace(message)
+                ? $"Roundtable feedback request failed with status code {(int)response.StatusCode}."
+                : message);
+    }
+
     public async IAsyncEnumerable<RoundtableSseEvent> StreamSessionAsync(
         string sessionId,
         string userId,

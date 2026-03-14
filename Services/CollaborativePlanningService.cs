@@ -249,6 +249,47 @@ public sealed class CollaborativePlanningService
         StartEventIngestion(chatId, roundtableSessionId, skipCount);
     }
 
+    public async Task SubmitFeedbackAsync(
+        Guid chatId,
+        string userId,
+        string text,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new InvalidOperationException("Feedback text is required.");
+        }
+
+        string roundtableSessionId;
+
+        using (var scope = _scopeFactory.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var chat = await dbContext.CollaborativePlanningChats
+                .Include(current => current.Participants)
+                .FirstOrDefaultAsync(current => current.Id == chatId, cancellationToken);
+
+            if (chat is null)
+            {
+                throw new KeyNotFoundException("Collaborative room was not found.");
+            }
+
+            if (!chat.Participants.Any(participant => participant.UserId == userId))
+            {
+                throw new UnauthorizedAccessException("You are not a member of this room.");
+            }
+
+            if (string.IsNullOrWhiteSpace(chat.RoundtableSessionId))
+            {
+                throw new InvalidOperationException("Negotiation session is not active.");
+            }
+
+            roundtableSessionId = chat.RoundtableSessionId;
+        }
+
+        await _roundtableEngineClient.SubmitFeedbackAsync(roundtableSessionId, userId, text.Trim(), cancellationToken);
+    }
+
     public async Task StartEligibleChatsAsync(CancellationToken cancellationToken)
     {
         List<Guid> candidateIds;
