@@ -1,0 +1,6 @@
+@luke_hacks_HostAddress = http://localhost:5149
+
+GET {{luke_hacks_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
