@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './auth/AuthProvider'
 import { ChatDock } from './components/ChatDock'
 import { MapView } from './components/MapView'
 import { RouteRibbon } from './components/RouteRibbon'
+import { createActivity } from './lib/profile'
 import { useNearbyPOIs } from './hooks/useNearbyPOIs'
 import { useUserLocation } from './hooks/useUserLocation'
 import { fetchRouteSegments, type RouteSegment } from './lib/osrm'
 import { AuthPage } from './pages/AuthPage'
 import { Dashboard } from './pages/Dashboard'
+import { Profile } from './pages/Profile'
 import type { PlannedRoute } from './types/agent'
 import NegotiationRoom from './pages/NegotiationRoom'
 import RoundTableLobby from './pages/RoundTableLobby'
@@ -31,6 +33,7 @@ function MapLayout({
   toggleMapMode: () => void
 }) {
   const { loc, heading } = useUserLocation()
+  const location = useLocation()
   const center = loc ?? FALLBACK
 
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -41,6 +44,15 @@ function MapLayout({
   const [aiSuggestedPois, setAiSuggestedPois] = useState<POI[]>([])
   const [aiSessionActive, setAiSessionActive] = useState(false)
   const [mapPickedAiPoi, setMapPickedAiPoi] = useState<POI | null>(null)
+  const [flyToTarget, setFlyToTarget] = useState<LngLat | null>(null)
+  const [trackingActive, setTrackingActive] = useState(false)
+  const [trackingIndex, setTrackingIndex] = useState(-1)
+  const [trackingStartedAt, setTrackingStartedAt] = useState<number | null>(null)
+  const [savingActivity, setSavingActivity] = useState(false)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [lastLegSeconds, setLastLegSeconds] = useState<number | null>(null)
+  const lastCheckpointRef = useRef<number | null>(null)
+  const timerRef = useRef<number | null>(null)
 
   const routeAbortRef = useRef<AbortController | null>(null)
 
@@ -60,6 +72,25 @@ function MapLayout({
   const { pois: manualSuggestedPois } = useNearbyPOIs(queryCenter, mode, excludeIds)
   const suggestedPois = aiSessionActive ? aiSuggestedPois : manualSuggestedPois
 
+  const routeDistanceMeters = useMemo(() => {
+    let total = 0
+    for (const seg of routeSegments) {
+      const coords = seg.geometry?.coordinates as [number, number][] | undefined
+      if (!coords || coords.length < 2) continue
+      for (let i = 1; i < coords.length; i++) {
+        const [lng1, lat1] = coords[i - 1]
+        const [lng2, lat2] = coords[i]
+        const R = 6_371_000
+        const toRad = (d: number) => (d * Math.PI) / 180
+        const dLat = toRad(lat2 - lat1)
+        const dLng = toRad(lng2 - lng1)
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+        total += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+      }
+    }
+    return total
+  }, [routeSegments])
+
   const clearSelections = useCallback(() => {
     setSelectedIds([])
     setAllSelectedPois([])
@@ -68,7 +99,40 @@ function MapLayout({
     setIgnoredIds([])
     setAiSuggestedPois([])
     setAiSessionActive(false)
+    setTrackingActive(false)
+    setTrackingIndex(-1)
+    setTrackingStartedAt(null)
+    setElapsedSeconds(0)
+    setLastLegSeconds(null)
+    if (timerRef.current != null) {
+      window.clearInterval(timerRef.current)
+      timerRef.current = null
+    }
   }, [])
+
+  useEffect(() => {
+    const state = location.state as unknown as { rerunRoute?: { pois: { id: string; name: string; lat: number; lng: number }[] } } | null
+    if (state?.rerunRoute?.pois && state.rerunRoute.pois.length > 0) {
+      const pois = state.rerunRoute.pois.map((p) => ({
+        id: p.id,
+        name: p.name,
+        lat: p.lat,
+        lng: p.lng,
+        distance: 0,
+        source: 'google' as const,
+      }))
+      setAllSelectedPois(pois)
+      setSelectedIds(pois.map((p) => p.id))
+      setIgnoredIds([])
+      setActivePoi(null)
+      setAiSuggestedPois([])
+      setAiSessionActive(false)
+      if (pois.length > 0) {
+        setFlyToTarget({ lng: pois[0].lng, lat: pois[0].lat })
+      }
+      window.history.replaceState(null, '', '/')
+    }
+  }, [location.state])
 
   useEffect(() => {
     routeAbortRef.current?.abort()
@@ -151,6 +215,15 @@ function MapLayout({
       setActivePoi(null)
       setAiSuggestedPois([])
       setAiSessionActive(false)
+      setTrackingActive(false)
+      setTrackingIndex(-1)
+      setTrackingStartedAt(null)
+      setElapsedSeconds(0)
+      setLastLegSeconds(null)
+      if (timerRef.current != null) {
+        window.clearInterval(timerRef.current)
+        timerRef.current = null
+      }
 
       const coords = route.geometry.coordinates as [number, number][]
       if (coords.length > 0) {
@@ -169,6 +242,81 @@ function MapLayout({
   const handleAiSessionChange = useCallback((active: boolean) => {
     setAiSessionActive(active)
     if (!active) setAiSuggestedPois([])
+  }, [])
+
+  const handleGoClick = useCallback(async () => {
+    if (allSelectedPois.length === 0 || routeDistanceMeters <= 0) return
+
+    if (!trackingActive) {
+      const now = Date.now()
+      setTrackingActive(true)
+      setTrackingIndex(0)
+      setTrackingStartedAt(now)
+      setElapsedSeconds(0)
+      setLastLegSeconds(null)
+      lastCheckpointRef.current = now
+      if (timerRef.current != null) {
+        window.clearInterval(timerRef.current)
+      }
+      timerRef.current = window.setInterval(() => {
+        setElapsedSeconds((prev) => prev + 1)
+      }, 1000)
+      const first = allSelectedPois[0]
+      setFlyToTarget({ lng: first.lng, lat: first.lat })
+      return
+    }
+
+    const lastIndex = allSelectedPois.length - 1
+    if (trackingIndex < lastIndex) {
+      const now = Date.now()
+      if (lastCheckpointRef.current != null) {
+        const leg = Math.floor((now - lastCheckpointRef.current) / 1000)
+        setLastLegSeconds(leg)
+      }
+      lastCheckpointRef.current = now
+      const next = trackingIndex + 1
+      setTrackingIndex(next)
+      const poi = allSelectedPois[next]
+      setFlyToTarget({ lng: poi.lng, lat: poi.lat })
+      return
+    }
+
+    if (savingActivity || !trackingStartedAt) return
+
+    setSavingActivity(true)
+    try {
+      const durationSeconds = Math.max(1, elapsedSeconds || Math.floor((Date.now() - trackingStartedAt) / 1000))
+      await createActivity({
+        title: `Route: ${allSelectedPois.map((p) => p.name).join(' → ')}`,
+        distanceMeters: routeDistanceMeters,
+        durationSeconds,
+        routeSummaryJson: JSON.stringify({
+          pois: allSelectedPois.map((p) => ({
+            id: p.id,
+            name: p.name,
+            lat: p.lat,
+            lng: p.lng,
+          })),
+        }),
+        source: 'ai',
+      })
+      setTrackingActive(false)
+      if (timerRef.current != null) {
+        window.clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+    } catch (err) {
+      console.error('Failed to save activity', err)
+    } finally {
+      setSavingActivity(false)
+    }
+  }, [allSelectedPois, routeDistanceMeters, trackingActive, trackingIndex, savingActivity, trackingStartedAt, elapsedSeconds])
+
+  const handleFocusChat = useCallback(() => {
+    const el = document.getElementById('chat-panel')
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
   }, [])
 
   return (
@@ -190,6 +338,7 @@ function MapLayout({
           selectedIds={selectedIds}
           routeSegments={routeSegments}
           activePoi={activePoi}
+          flyToTarget={flyToTarget}
           onPoiTap={handlePoiTap}
           onSelectWaypoint={handleSelectWaypoint}
           onIgnorePoi={handleIgnoreWaypoint}
@@ -202,6 +351,12 @@ function MapLayout({
           routeSegments={routeSegments}
           onRemove={handleSelectWaypoint}
           onClearRoute={clearSelections}
+          onGoClick={handleGoClick}
+          trackingActive={trackingActive}
+          trackingIndex={trackingIndex}
+          savingActivity={savingActivity}
+          elapsedSeconds={elapsedSeconds}
+          lastLegSeconds={lastLegSeconds}
         />
 
         <ChatDock
@@ -215,22 +370,52 @@ function MapLayout({
           onMapPickHandled={() => setMapPickedAiPoi(null)}
         />
 
-        <button
-          type="button"
-          onClick={toggleMode}
-          className="glass absolute right-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-slate-950/40 text-xs text-slate-100 shadow-[0_12px_40px_rgba(0,0,0,0.45)] ring-1 ring-white/10"
-          aria-label="Toggle day/night mode"
-        >
-          {mode === 'day' ? '☾' : '☼'}
-        </button>
-        <button
-          type="button"
-          onClick={toggleMapMode}
-          className="glass absolute right-4 top-16 z-20 flex h-8 px-2 items-center justify-center rounded-full border border-white/10 bg-slate-950/40 text-[10px] text-slate-100 shadow-[0_10px_32px_rgba(0,0,0,0.45)] ring-1 ring-white/10"
-          aria-label="Toggle 2D/3D map"
-        >
-          {mapMode === '2d' ? '3D' : '2D'}
-        </button>
+        <div className="pointer-events-none absolute right-4 top-4 z-20 flex flex-col items-end gap-2">
+          <div
+            className={
+              'glass pointer-events-auto flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-medium shadow-[0_12px_40px_rgba(0,0,0,0.45)] ring-1 ' +
+              (mode === 'day'
+                ? 'border-white/40 bg-white/60 text-slate-800 ring-white/60'
+                : 'border-white/10 bg-slate-950/60 text-slate-100 ring-white/10')
+            }
+          >
+            <Link
+              to="/"
+              className="rounded-full px-2 py-0.5 hover:bg-white/20"
+            >
+              Dashboard
+            </Link>
+            <Link
+              to="/profile"
+              className="rounded-full px-2 py-0.5 hover:bg-white/20"
+            >
+              Profile
+            </Link>
+            <button
+              type="button"
+              onClick={handleFocusChat}
+              className="rounded-full px-2 py-0.5 hover:bg-white/20"
+            >
+              Chat
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={toggleMode}
+            className="glass pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-slate-950/40 text-xs text-slate-100 shadow-[0_12px_40px_rgba(0,0,0,0.45)] ring-1 ring-white/10"
+            aria-label="Toggle day/night mode"
+          >
+            {mode === 'day' ? '☾' : '☼'}
+          </button>
+          <button
+            type="button"
+            onClick={toggleMapMode}
+            className="glass pointer-events-auto flex h-8 items-center justify-center rounded-full border border-white/10 bg-slate-950/40 px-2 text-[10px] text-slate-100 shadow-[0_10px_32px_rgba(0,0,0,0.45)] ring-1 ring-white/10"
+            aria-label="Toggle 2D/3D map"
+          >
+            {mapMode === '2d' ? '3D' : '2D'}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -289,6 +474,18 @@ export default function App() {
         element={(
           <RequireAuth>
             <Dashboard
+              mode={mode}
+              onToggleMode={toggleMode}
+              onLogout={logout}
+            />
+          </RequireAuth>
+        )}
+      />
+      <Route
+        path="/profile"
+        element={(
+          <RequireAuth>
+            <Profile
               mode={mode}
               onToggleMode={toggleMode}
               onLogout={logout}

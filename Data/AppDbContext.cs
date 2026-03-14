@@ -12,9 +12,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityDbCo
 
     public DbSet<CollaborativePlanningEvent> CollaborativePlanningEvents => Set<CollaborativePlanningEvent>();
 
+    public DbSet<Activity> Activities => Set<Activity>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        builder.Entity<Activity>()
+            .HasOne(a => a.User)
+            .WithMany()
+            .HasForeignKey(a => a.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.Entity<CollaborativePlanningChat>()
             .HasIndex(chat => chat.InviteToken)

@@ -56,15 +56,26 @@ export function AuthPage({ mode, onToggleMode }: { mode: Mode; onToggleMode: () 
 
   return (
     <div
-      className={
-        'flex min-h-dvh items-center justify-center px-4 py-8 transition-colors duration-300 ' +
-        (isDay ? 'bg-slate-100 text-slate-900' : 'bg-slate-950 text-slate-100')
-      }
+      className="relative flex min-h-dvh items-center justify-center overflow-hidden px-4 py-8 text-slate-100"
     >
+      <div className="pointer-events-none absolute inset-0 -z-10">
+        <div
+          className="h-full w-full bg-cover bg-center"
+          style={{
+            backgroundImage: 'url(\"https://tile.openstreetmap.org/5/15/10.png\")',
+          }}
+        />
+        <div
+          className={
+            'absolute inset-0 ' +
+            (isDay ? 'bg-sky-500/25 mix-blend-multiply' : 'bg-slate-950/70')
+          }
+        />
+      </div>
       <div
         className={
-          'glass w-full max-w-md rounded-3xl border p-6 shadow-[0_24px_90px_rgba(0,0,0,0.35)] sm:p-8 ' +
-          (isDay ? 'border-slate-900/10 bg-white/70' : 'border-white/10 bg-slate-900/55')
+          'glass w-full max-w-md rounded-3xl border p-6 shadow-[0_24px_90px_rgba(0,0,0,0.55)] sm:p-8 ' +
+          (isDay ? 'border-white/40 bg-white/15 text-slate-900' : 'border-white/20 bg-slate-900/35')
         }
       >
         <div className="mb-6 flex items-center justify-between">

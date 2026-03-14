@@ -1,5 +1,4 @@
 import { useCallback, useRef, useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
 import { planIterative } from '../lib/agent'
 import type { IterativeSession, IterativeWaypoint, PlannedRoute } from '../types/agent'
 import type { LngLat, POI } from '../types/map'
@@ -36,7 +35,6 @@ type Message = TextMessage | OptionsMessage
 let nextId = 1
 
 export function ChatDock({ mode, userLocation, onRouteReady, onAiOptionsChange, onAiSessionChange, onClearRoute, mapPickedAiPoi, onMapPickHandled }: Props) {
-  const [hover, setHover] = useState(false)
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -195,10 +193,8 @@ export function ChatDock({ mode, userLocation, onRouteReady, onAiOptionsChange, 
   }, [mapPickedAiPoi, onMapPickHandled])
 
   return (
-    <div className="pointer-events-none absolute bottom-4 left-4 z-10">
+    <div id="chat-panel" className="pointer-events-none absolute bottom-4 left-4 z-10">
       <div
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
         className={[
           'glass pointer-events-auto flex h-[70dvh] w-[min(360px,calc(100vw-2rem))] flex-col overflow-hidden rounded-3xl border shadow-[0_24px_90px_rgba(0,0,0,0.35)] ring-1 transition-all duration-300',
           isDay
@@ -206,28 +202,6 @@ export function ChatDock({ mode, userLocation, onRouteReady, onAiOptionsChange, 
             : 'border-white/10 bg-slate-950/25 text-slate-100 ring-white/5',
         ].join(' ')}
       >
-        {/* Floating header */}
-        <div
-          className={[
-            'absolute left-0 right-0 top-0 z-10 flex items-center justify-between rounded-t-3xl border-b px-4 py-2.5 transition-all duration-200',
-            isDay ? 'border-slate-900/10 bg-white/60' : 'border-white/10 bg-slate-950/50',
-            hover ? 'opacity-100' : 'pointer-events-none opacity-0',
-          ].join(' ')}
-        >
-          <span className="text-xs font-medium opacity-90">PaceRoute</span>
-          <Link
-            to="/dashboard"
-            className={[
-              'rounded-xl px-3 py-1.5 text-xs font-semibold transition',
-              isDay
-                ? 'bg-emerald-500/25 text-emerald-800 hover:bg-emerald-500/40'
-                : 'bg-emerald-400/25 text-emerald-100 hover:bg-emerald-400/40',
-            ].join(' ')}
-          >
-            Dashboard
-          </Link>
-        </div>
-
         {/* Chat header */}
         <div
           className={[
@@ -273,7 +247,7 @@ export function ChatDock({ mode, userLocation, onRouteReady, onAiOptionsChange, 
         </div>
 
         {/* Messages */}
-        <div ref={scrollRef} className="flex-1 overflow-auto px-3 py-3">
+        <div ref={scrollRef} className="no-scrollbar flex-1 overflow-auto px-3 py-3">
           <div className="space-y-3">
             {messages.map((msg) =>
               msg.kind === 'text' ? (

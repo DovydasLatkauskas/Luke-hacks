@@ -13,6 +13,12 @@ type Props = {
   routeSegments: RouteSegment[]
   onRemove: (id: string) => void
   onClearRoute?: () => void
+  onGoClick?: () => void
+  trackingActive?: boolean
+  trackingIndex?: number
+  savingActivity?: boolean
+  elapsedSeconds?: number
+  lastLegSeconds?: number | null
 }
 
 function haversineM(
@@ -41,7 +47,19 @@ function fmtDist(m: number): string {
   return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`
 }
 
-export function RouteRibbon({ mode, allSelectedPois, routeSegments, onRemove, onClearRoute }: Props) {
+export function RouteRibbon({
+  mode,
+  allSelectedPois,
+  routeSegments,
+  onRemove,
+  onClearRoute,
+  onGoClick,
+  trackingActive,
+  trackingIndex,
+  savingActivity,
+  elapsedSeconds,
+  lastLegSeconds,
+}: Props) {
   const isDay = mode === 'day'
   if (allSelectedPois.length === 0) return null
 
@@ -70,6 +88,13 @@ export function RouteRibbon({ mode, allSelectedPois, routeSegments, onRemove, on
 
   const totalDist = cumulative
 
+  const fmtTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60)
+    const s = seconds % 60
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}:${pad(s)}`
+  }
+
   return (
     <div className="pointer-events-none absolute left-0 right-0 top-0 z-20 flex justify-center px-16 pt-4">
       <div
@@ -80,15 +105,44 @@ export function RouteRibbon({ mode, allSelectedPois, routeSegments, onRemove, on
             : 'border-white/10 bg-slate-950/50 text-slate-100',
         ].join(' ')}
       >
-        {/* Start marker */}
-        <div
-          className={[
-            'mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold',
-            isDay ? 'bg-slate-200/60 text-slate-500' : 'bg-slate-800/60 text-slate-400',
-          ].join(' ')}
-        >
-          GO
-        </div>
+        {/* Start / Go marker */}
+        {onGoClick ? (
+          <button
+            type="button"
+            onClick={onGoClick}
+            disabled={savingActivity}
+            className={[
+              'mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold transition',
+              savingActivity
+                ? 'cursor-wait opacity-60 ' + (isDay ? 'bg-emerald-500/40 text-emerald-950' : 'bg-emerald-400/40 text-emerald-50')
+                : isDay
+                  ? 'bg-emerald-500/30 text-emerald-900 hover:bg-emerald-500/50'
+                  : 'bg-emerald-400/30 text-emerald-100 hover:bg-emerald-400/50',
+            ].join(' ')}
+          >
+            {!trackingActive && 'GO'}
+            {trackingActive && typeof trackingIndex === 'number' && trackingIndex < allSelectedPois.length - 1 && 'Next'}
+            {trackingActive && typeof trackingIndex === 'number' && trackingIndex >= allSelectedPois.length - 1 && 'Save'}
+          </button>
+        ) : (
+          <div
+            className={[
+              'mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold',
+              isDay ? 'bg-slate-200/60 text-slate-500' : 'bg-slate-800/60 text-slate-400',
+            ].join(' ')}
+          >
+            GO
+          </div>
+        )}
+
+        {trackingActive && typeof elapsedSeconds === 'number' && elapsedSeconds > 0 && (
+          <div className="mr-2 flex shrink-0 flex-col text-[9px] opacity-70">
+            <span>Total {fmtTime(elapsedSeconds)}</span>
+            {typeof lastLegSeconds === 'number' && lastLegSeconds > 0 && (
+              <span>Last {fmtTime(lastLegSeconds)}</span>
+            )}
+          </div>
+        )}
 
         {allSelectedPois.map((poi, i) => {
           const color = SEGMENT_COLORS[i % SEGMENT_COLORS.length]
@@ -105,9 +159,13 @@ export function RouteRibbon({ mode, allSelectedPois, routeSegments, onRemove, on
               <div
                 className={[
                   'group relative flex items-center gap-2 rounded-xl border px-2 py-1.5',
-                  isDay
-                    ? 'border-slate-200/80 bg-white/60'
-                    : 'border-white/10 bg-slate-800/60',
+                  trackingActive && typeof trackingIndex === 'number' && i <= trackingIndex
+                    ? isDay
+                      ? 'border-emerald-500/70 bg-emerald-500/20'
+                      : 'border-emerald-400/70 bg-emerald-400/20'
+                    : isDay
+                      ? 'border-slate-200/80 bg-white/60'
+                      : 'border-white/10 bg-slate-800/60',
                 ].join(' ')}
               >
                 <div

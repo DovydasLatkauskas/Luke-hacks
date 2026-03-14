@@ -10,7 +10,7 @@ const OVERPASS_URLS = [
   'https://overpass.nchc.org.tw/api/interpreter',
 ]
 const RADIUS_M = 2000
-const DISPLAY_LIMIT = 5
+const DISPLAY_LIMIT = 10
 
 // Simple in‑memory cache of raw POI results keyed by a
 // quantised center + mode so we can reuse data when
@@ -96,13 +96,20 @@ export function useNearbyPOIs(
           const fallbackName = mode === 'day' ? 'Cafe' : 'Pub'
           const all: POI[] = (json.elements ?? [])
             .filter((el: { lat?: number; lon?: number }) => el.lat != null && el.lon != null)
-            .map((el: { id: number; lat: number; lon: number; tags?: Record<string, string> }) => ({
-              id: String(el.id),
-              lat: el.lat,
-              lng: el.lon,
-              name: el.tags?.name ?? fallbackName,
-              distance: haversineM(center, { lat: el.lat, lng: el.lon }),
-            }))
+            .map((el: { id: number; lat: number; lon: number; tags?: Record<string, string> }) => {
+              const name = el.tags?.name ?? fallbackName
+              const distance = haversineM(center, { lat: el.lat, lng: el.lon })
+              const query = encodeURIComponent(`${name} edinburgh ${mode === 'day' ? 'cafe' : 'pub'}`)
+              return {
+                id: String(el.id),
+                lat: el.lat,
+                lng: el.lon,
+                name,
+                distance,
+                imageUrl: `https://source.unsplash.com/128x128/?${query}`,
+                source: 'osm' as const,
+              }
+            })
 
           // Cache raw results for this center+mode so we can
           // reuse them if Overpass is temporarily unavailable.
@@ -136,17 +143,20 @@ export function useNearbyPOIs(
         // is never completely empty even if Overpass is down or
         // returning no data for this location.
         const fallbackName = mode === 'day' ? 'Cafe' : 'Pub'
-        const demo: POI[] = [0, 1, 2, 3, 4].map((i) => {
+        const demo: POI[] = Array.from({ length: DISPLAY_LIMIT }, (_, i) => {
           const dLat = (i - 2) * 0.001
           const dLng = ((i % 3) - 1) * 0.0015
           const lat = center.lat + dLat
           const lng = center.lng + dLng
+          const query = encodeURIComponent(`${fallbackName} edinburgh`)
           return {
             id: `demo-${mode}-${i}`,
             lat,
             lng,
             name: `${fallbackName} ${i + 1}`,
             distance: haversineM(center, { lat, lng }),
+            imageUrl: `https://source.unsplash.com/128x128/?${query}`,
+            source: 'osm' as const,
           }
         })
         setPois(applyFilterAndLimit(demo, exclude))

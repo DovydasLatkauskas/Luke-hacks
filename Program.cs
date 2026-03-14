@@ -610,6 +610,100 @@ app.MapPost("/api/google/route", async (
 .WithName("ComputeGoogleRoute")
 .WithOpenApi();
 
+var profileGroup = app.MapGroup("/api/profile").RequireAuthorization();
+
+profileGroup.MapGet("/summary", async (
+    ClaimsPrincipal user,
+    UserManager<ApplicationUser> userManager,
+    AppDbContext dbContext,
+    CancellationToken cancellationToken) =>
+{
+    var currentUser = await userManager.GetUserAsync(user);
+    if (currentUser is null) return Results.Unauthorized();
+
+    var activities = await dbContext.Activities
+        .AsNoTracking()
+        .Where(a => a.UserId == currentUser.Id)
+        .OrderByDescending(a => a.CompletedAtUtc)
+        .ToListAsync(cancellationToken);
+
+    var totalDistance = activities.Sum(a => a.DistanceMeters);
+    var totalDuration = activities.Sum(a => a.DurationSeconds);
+    var totalCalories = activities.Sum(a => a.EstimatedCalories);
+    var longest = activities.Count > 0 ? activities.Max(a => a.DistanceMeters) : 0;
+
+    var recent = activities.Take(10).Select(a => new ActivityResponse(
+        a.Id, a.Title, a.DistanceMeters, a.DurationSeconds,
+        a.EstimatedCalories, a.Source, a.StartedAtUtc, a.CompletedAtUtc, a.RouteSummaryJson)).ToList();
+
+    return Results.Ok(new ProfileSummaryResponse(
+        totalDistance, totalDuration, totalCalories,
+        activities.Count, longest, recent));
+})
+.WithName("GetProfileSummary")
+.WithOpenApi();
+
+profileGroup.MapGet("/activities", async (
+    ClaimsPrincipal user,
+    UserManager<ApplicationUser> userManager,
+    AppDbContext dbContext,
+    CancellationToken cancellationToken) =>
+{
+    var currentUser = await userManager.GetUserAsync(user);
+    if (currentUser is null) return Results.Unauthorized();
+
+    var activities = await dbContext.Activities
+        .AsNoTracking()
+        .Where(a => a.UserId == currentUser.Id)
+        .OrderByDescending(a => a.CompletedAtUtc)
+        .Take(50)
+        .Select(a => new ActivityResponse(
+            a.Id, a.Title, a.DistanceMeters, a.DurationSeconds,
+            a.EstimatedCalories, a.Source, a.StartedAtUtc, a.CompletedAtUtc, a.RouteSummaryJson))
+        .ToListAsync(cancellationToken);
+
+    return Results.Ok(activities);
+})
+.WithName("GetProfileActivities")
+.WithOpenApi();
+
+profileGroup.MapPost("/activities", async (
+    CreateActivityRequest request,
+    ClaimsPrincipal user,
+    UserManager<ApplicationUser> userManager,
+    AppDbContext dbContext,
+    CancellationToken cancellationToken) =>
+{
+    var currentUser = await userManager.GetUserAsync(user);
+    if (currentUser is null) return Results.Unauthorized();
+
+    var calories = ActivityMetrics.EstimateCalories(request.DistanceMeters);
+    var now = DateTime.UtcNow;
+
+    var activity = new Activity
+    {
+        UserId = currentUser.Id,
+        Title = request.Title,
+        DistanceMeters = request.DistanceMeters,
+        DurationSeconds = request.DurationSeconds,
+        EstimatedCalories = calories,
+        Source = request.Source ?? "manual",
+        StartedAtUtc = now.AddSeconds(-request.DurationSeconds),
+        CompletedAtUtc = now,
+        RouteSummaryJson = request.RouteSummaryJson,
+    };
+
+    dbContext.Activities.Add(activity);
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    return Results.Ok(new ActivityResponse(
+        activity.Id, activity.Title, activity.DistanceMeters,
+        activity.DurationSeconds, activity.EstimatedCalories,
+        activity.Source, activity.StartedAtUtc, activity.CompletedAtUtc, activity.RouteSummaryJson));
+})
+.WithName("CreateActivity")
+.WithOpenApi();
+
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -719,6 +813,30 @@ static async Task EnsureSqliteCollaborativePlanningSchemaAsync(
         """
         CREATE INDEX IF NOT EXISTS "IX_CollaborativePlanningEvents_ChatId_Id"
         ON "CollaborativePlanningEvents" ("ChatId", "Id");
+        """,
+        cancellationToken);
+
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE TABLE IF NOT EXISTS "Activities" (
+            "Id" TEXT NOT NULL CONSTRAINT "PK_Activities" PRIMARY KEY,
+            "UserId" TEXT NOT NULL,
+            "Title" TEXT NULL,
+            "Source" TEXT NOT NULL,
+            "DistanceMeters" REAL NOT NULL,
+            "DurationSeconds" INTEGER NOT NULL,
+            "EstimatedCalories" INTEGER NOT NULL,
+            "StartedAtUtc" TEXT NOT NULL,
+            "CompletedAtUtc" TEXT NOT NULL,
+            "RouteSummaryJson" TEXT NULL
+        );
+        """,
+        cancellationToken);
+
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE INDEX IF NOT EXISTS "IX_Activities_UserId_CompletedAtUtc"
+        ON "Activities" ("UserId", "CompletedAtUtc");
         """,
         cancellationToken);
 }

@@ -25,6 +25,7 @@ type Props = {
   selectedIds: string[]
   routeSegments: RouteSegment[]
   activePoi: POI | null
+  flyToTarget?: LngLat | null
   onPoiTap: (id: string) => void
   onSelectWaypoint: (id: string) => void
   onIgnorePoi: (id: string) => void
@@ -82,6 +83,7 @@ function poiToGeoJSON(
         distance: p.distance,
         selected: selectedIds.includes(p.id) ? 1 : 0,
         distRatio: maxDist > 0 ? Math.min(p.distance / maxDist, 1) : 0,
+        isAi: p.source === 'google' ? 1 : 0,
       },
     })),
   }
@@ -113,6 +115,7 @@ export function MapView({
   selectedIds,
   routeSegments,
   activePoi,
+  flyToTarget,
   onPoiTap,
   onSelectWaypoint,
   onIgnorePoi,
@@ -330,6 +333,8 @@ export function MapView({
           'circle-radius': ['case', ['==', ['get', 'selected'], 1], 8, 7],
           'circle-color': [
             'case',
+            ['==', ['get', 'isAi'], 0],
+            '#000000',
             ['==', ['get', 'selected'], 1],
             '#059669',
             [
@@ -342,6 +347,8 @@ export function MapView({
           'circle-stroke-width': 2,
           'circle-stroke-color': [
             'case',
+            ['==', ['get', 'isAi'], 0],
+            '#000000',
             ['==', ['get', 'selected'], 1],
             '#047857',
             [
@@ -555,6 +562,12 @@ export function MapView({
       map.easeTo({ pitch: 0, bearing: 0, duration: 600 })
     }
   }, [mapMode])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !flyToTarget) return
+    map.flyTo({ center: [flyToTarget.lng, flyToTarget.lat], zoom: 16, duration: 1800 })
+  }, [flyToTarget])
 
   // ---------- update POI source ----------
   useEffect(() => {
