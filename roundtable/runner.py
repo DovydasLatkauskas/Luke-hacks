@@ -12,13 +12,7 @@ from fetch_venues import (
     get_venue_by_id,
     get_fallback_venue,
 )
-from prompts import (
-    AGENT_SYSTEM,
-    ORCHESTRATOR_PROMPT,
-    PROPOSAL_PROMPT,
-    REACTION_PROMPT,
-    VOTING_PROMPT,
-)
+from prompts import AGENT_SYSTEM, ORCHESTRATOR_PROMPT, PROPOSAL_PROMPT, REACTION_PROMPT, VOTING_PROMPT
 from config import OPENAI_API_KEY, OPENAI_MODEL
 
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
@@ -73,7 +67,11 @@ def build_votes_list(agents: list[AgentState], round_num: int) -> str:
     return "\n".join(lines)
 
 
-def build_conversation_history(agents: list[AgentState], up_to_round: int) -> str:
+def build_conversation_history(
+    agents: list[AgentState],
+    up_to_round: int,
+    veto_reasons: list[str] | None = None,
+) -> str:
     """Builds a readable transcript of all rounds so far for agents to react to."""
     parts = []
     for r in range(1, up_to_round + 1):
@@ -83,6 +81,9 @@ def build_conversation_history(agents: list[AgentState], up_to_round: int) -> st
             parts.append(f"=== Round {r} Proposals ===\n{proposals}")
         if votes:
             parts.append(f"=== Round {r} Votes & Objections ===\n{votes}")
+    if veto_reasons:
+        reasons_str = "\n".join(f"- {r}" for r in veto_reasons)
+        parts.append(f"=== Group Vetoed the Previous Result ===\n{reasons_str}\nYou must propose a new itinerary that addresses these concerns.")
     return "\n\n".join(parts)
 
 
@@ -298,7 +299,8 @@ async def run_negotiation(session: NegotiationSession) -> AsyncGenerator[dict, N
         session.phase = "proposals"
         yield emit("phase", {"phase": "proposals", "round": session.round})
 
-        conversation_history = build_conversation_history(agents, session.round - 1)
+        veto_reasons = session.veto_reasons if session.veto_count > 0 else None
+        conversation_history = build_conversation_history(agents, session.round - 1, veto_reasons)
 
         for a in agents:
             yield emit("thinking", {"agent_id": a.user_id, "thinking": True})

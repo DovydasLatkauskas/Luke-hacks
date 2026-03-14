@@ -90,23 +90,4 @@ Respond ONLY in this exact JSON format, no other text:
 }}"""
 
 
-VETO_PROPOSAL_PROMPT = """Round {round}. The previous plan was vetoed. Veto reasons from the group:
-{veto_reasons}
-
-The vetoed itinerary was:
-- Pre-drinks: {vetoed_pre_drinks}
-- Dinner: {vetoed_dinner}
-- Bar: {vetoed_bar}
-
-Available Edinburgh venues:
-{venue_list}
-
-Propose a NEW itinerary that addresses these concerns. Do not repeat the same three venues as the vetoed plan.
-
-Respond ONLY in this exact JSON format, no other text:
-{{
-  "pre_drinks": "<venue_id>",
-  "dinner": "<venue_id>",
-  "bar": "<venue_id>",
-  "reasoning": "<2-3 sentences explaining how this addresses the group's concerns>"
-}}"""
+"""

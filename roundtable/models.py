@@ -9,7 +9,8 @@ class UserConstraints(BaseModel):
     dietary: str
     mood: str
     time: str
-    lat: float | None = None
+    location: str | None = None   # neighbourhood text from .NET backend
+    lat: float | None = None      # GPS coords from browser (preferred)
     lng: float | None = None
 
 

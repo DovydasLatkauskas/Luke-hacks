@@ -141,7 +141,6 @@ async def veto_session(session_id: str, req: VetoRequest):
 
     session.veto_reasons.append(req.reason)
     session.veto_count += 1
-    session.round += 1
     session.phase = "proposals"
     session.started = True  # keep started so stream poll picks up new events
 
