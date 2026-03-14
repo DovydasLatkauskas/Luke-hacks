@@ -1,6 +1,25 @@
 @luke_hacks_HostAddress = http://localhost:5149
 
-GET {{luke_hacks_HostAddress}}/weatherforecast/
-Accept: application/json
+### Search POIs - cafes and parks in Edinburgh (day)
+POST {{luke_hacks_HostAddress}}/api/pois/search
+Content-Type: application/json
+
+{
+  "types": ["cafe", "park"],
+  "location": { "lat": 55.9533, "lng": -3.1883 },
+  "radiusKm": 2,
+  "timeOfDay": "day"
+}
+
+### Search POIs - pubs and bars in Edinburgh (night)
+POST {{luke_hacks_HostAddress}}/api/pois/search
+Content-Type: application/json
+
+{
+  "types": ["pub", "bar", "nightclub"],
+  "location": { "lat": 55.9533, "lng": -3.1883 },
+  "radiusKm": 1.5,
+  "timeOfDay": "night"
+}
 
 ###
