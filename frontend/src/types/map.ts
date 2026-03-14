@@ -7,4 +7,9 @@ export type POI = {
   name: string
   distance: number
   imageUrl?: string | null
+  address?: string | null
+  primaryType?: string | null
+  primaryTypeLabel?: string | null
+  mapsUri?: string | null
+  source?: 'osm' | 'google'
 }

@@ -1,7 +1,12 @@
 import { Link } from 'react-router-dom'
 import type { Mode } from '../App'
 
-type Props = { mode: Mode; onToggleMode?: () => void }
+type Props = {
+  mode: Mode
+  onToggleMode?: () => void
+  userLabel?: string
+  onLogout?: () => void
+}
 
 const MOCK_ROUTES = [
   { id: '1', name: 'Morning 5k coffee loop', date: '2 days ago', distance: '5.2 km', duration: '28 min', elevation: '42 m' },
@@ -16,7 +21,7 @@ const MOCK_TOP_PLACES = [
   { name: 'Harbour View', visits: 6, type: 'viewpoint' },
 ]
 
-export function Dashboard({ mode, onToggleMode }: Props) {
+export function Dashboard({ mode, onToggleMode, userLabel, onLogout }: Props) {
   const isDay = mode === 'day'
 
   return (
@@ -35,6 +40,33 @@ export function Dashboard({ mode, onToggleMode }: Props) {
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 py-4">
           <h1 className="text-xl font-bold tracking-tight">PaceRoute</h1>
           <div className="flex items-center gap-2">
+            {userLabel && (
+              <span
+                className={
+                  'max-w-[14rem] truncate rounded-xl border px-3 py-1.5 text-xs ' +
+                  (isDay
+                    ? 'border-slate-900/20 bg-slate-900/10 text-slate-700'
+                    : 'border-white/10 bg-slate-950/40 text-slate-300')
+                }
+                title={userLabel}
+              >
+                {userLabel}
+              </span>
+            )}
+            {onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                className={
+                  'rounded-xl border px-3 py-2 text-sm transition ' +
+                  (isDay
+                    ? 'border-slate-900/20 bg-slate-900/10 text-slate-700 hover:bg-slate-900/20'
+                    : 'border-white/10 bg-slate-950/40 text-slate-100 hover:bg-slate-950/60')
+                }
+              >
+                Log out
+              </button>
+            )}
             {onToggleMode && (
               <button
                 type="button"

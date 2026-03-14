@@ -1,198 +1,159 @@
 # PaceRoute
 
-**Day/night-aware iterative route builder — pick cafes by day, pubs by night, and watch your route grow on the map.**
+PaceRoute is a full-stack local route planner:
+- ASP.NET Core 8 minimal API backend with Identity + SQLite
+- React + TypeScript + MapLibre frontend
+- Manual routing mode (nearby cafes/pubs + OSRM)
+- AI planning mode (OpenAI Responses API + Google Places + Google Routes)
 
-Plan a walking route around real nearby places. The app suggests the 5 closest POIs, you tap to add them to your route, and it immediately plots the walking path. Each time you add a stop, the next batch of suggestions appears near your latest waypoint so you can keep building outward. Toggle between **Day mode** (cafes) and **Night mode** (pubs) — the theme, POI type, and map style all switch together.
+## Current capabilities
 
----
+### Authentication
+- Register/login via ASP.NET Core Identity API endpoints (`/api/auth/*`)
+- Bearer token session stored in browser `localStorage`
+- Protected frontend routes:
+  - `/` map page
+  - `/dashboard` dashboard page
 
-## Features
+Password rules from backend config:
+- Minimum length `8`
+- No required digit, uppercase, lowercase, or special character
 
-### Iterative route building
-- Suggests the **5 closest** cafes (day) or pubs (night) from your current position or last waypoint
-- Tap a suggestion in the sidebar or on the map to add it to your route
-- Route geometry updates live via OSRM (walking profile)
-- After each selection, the next 5 suggestions load from the **last waypoint's location**, so the route extends naturally
-- Unselected suggestions stay visible and tappable — backtrack at any time
-- Remove stops by tapping them in the route summary bar
+### Map and routing
+- Live geolocation watch with heading (when available)
+- Fallback location if geolocation is unavailable: `55.9533, -3.1883` (Edinburgh)
+- Day mode pulls nearby `cafe` POIs from Overpass
+- Night mode pulls nearby `pub` POIs from Overpass
+- Manual POI query radius: `1500m`
+- Manual POI display limit: `5`
+- Manual routing uses OSRM foot routing in the browser
+- Route updates when stops are added/removed
 
-### Clean map experience
-- Desaturated OSM raster tiles for reduced visual noise
-- User position shown as a **directional arrow** (rotates with device heading when moving)
-- POI markers rendered as **native MapLibre symbol layers** — zero lag during pan/zoom
-- White circle markers with text labels and halo for readability
-- Compact attribution, no extra controls or overlays
+### AI planner
+- Prompt sent to `POST /api/agent/plan`
+- Optional iterative flow available at `POST /api/agent/plan/iterative`
+- Backend asks OpenAI Responses API for a structured local intent
+- Backend searches Google Places Text Search and filters by distance
+- Backend computes a walking route using Google Routes API
+- Frontend shows returned places, route summary, and Google Maps deep links
 
-### Map interactions
-- **Hover** a POI on the map to see a Google Maps-style info card (name, distance, type)
-- **Click** a POI to open a detailed popup with an "Add to route" / "Remove from route" button
-- Route line drawn as a smooth emerald path under the markers
+AI intent constraints enforced in backend:
+- `radiusMeters`: `500` to `20000`
+- `maxResultCount`: `3` to `8`
+- `routeStopCount`: `1` to `5`
 
-### Day & night modes
-- **Day mode**: light theme, suggests cafes, warm map tones
-- **Night mode**: dark theme, suggests pubs, cooler map tones
-- Mode toggle in the top-right corner
-- Switching modes clears the current route and fetches fresh suggestions
-
-### Translucent glass UI
-- Sidebar and popups use `backdrop-filter: blur()` for a frosted glass effect
-- Sidebar is semi-transparent so the map shows through
-- Floating header with Dashboard link appears on hover over the sidebar
-
-### Dashboard (Strava-style)
-- Accessible via the floating header's "Dashboard" button or `/dashboard`
-- Shows past routes (mock data) with distance, duration, elevation
-- Top visited places grid with visit counts
-- Day/night theme toggle
-- "Open map" button to return to the route builder
-
-### Geolocation
-- Uses the browser Geolocation API with `watchPosition` for real-time updates
-- Tracks heading and speed for arrow rotation
-- Falls back to Edinburgh city center (55.9533°N, 3.1883°W) when location is unavailable
-- POIs load immediately using either real location or fallback
-
----
+### Dashboard
+- `/dashboard` exists and is authenticated
+- Route/place cards are currently static mock data
 
 ## Tech stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18 + TypeScript + Tailwind CSS 3 |
-| Bundler | Vite 6 |
-| Map rendering | MapLibre GL JS 4.7 |
-| POI data | Overpass API (OpenStreetMap) |
-| Route geometry | OSRM public API (walking profile) |
-| Location tracking | Web Geolocation API |
-| Routing | React Router DOM 6 |
-| Backend | ASP.NET Core 8.0 (C#) — stub, not yet wired |
+| Backend | ASP.NET Core 8 minimal API |
+| Auth | ASP.NET Core Identity API endpoints |
+| Database | EF Core + SQLite |
+| Frontend | React 18 + TypeScript + Tailwind CSS |
+| Map | MapLibre GL |
+| Manual POI source | Overpass API |
+| Manual route source | OSRM public API |
+| AI planner | OpenAI Responses API |
+| AI place search | Google Places API (New) |
+| AI route | Google Routes API |
 
----
+## Configuration
 
-## How it works
+Backend options come from `appsettings*.json` and can be overridden by environment variables:
 
-### Iterative route flow
-```
-App loads → useUserLocation() watches GPS (or falls back to Edinburgh)
-         ↓
-useNearbyPOIs(center, mode) queries Overpass API
-  → "amenity=cafe" (day) or "amenity=pub" (night)
-  → within 1500m radius, sorted by Haversine distance, top 5
-         ↓
-MapView renders POI circles + labels via native MapLibre layers
-ChatDock lists the 5 suggestions with distance
-         ↓
-User taps a POI (on map or sidebar)
-  → selectedIds updated, allSelectedPois grows
-  → fetchRoute([userLocation, ...selectedPois]) via OSRM
-  → routeGeometry drawn as GeoJSON line layer
-         ↓
-queryCenter moves to last selected POI
-  → useNearbyPOIs re-fires from that new center
-  → next 5 suggestions appear (excluding already-selected)
-         ↓
-Loop continues — route grows outward from stop to stop
-```
+| Variable | Purpose | Default |
+|---|---|---|
+| `OPENAI_API_KEY` | OpenAI API key for planner | empty |
+| `OPENAI_MODEL` | OpenAI model used by planner | `gpt-5-mini` |
+| `GOOGLE_MAPS_API_KEY` | Google key for Places + Routes | empty |
 
-### Data flow
-```
-MapLayout (lifted state)
-  ├── center (user loc or fallback)
-  ├── suggestedPois (from Overpass, 5 closest)
-  ├── selectedIds + allSelectedPois (user picks)
-  ├── routeGeometry (from OSRM)
-  └── activePoi / hoverInfo (UI state)
-       │
-       ├──→ MapView (map, markers, route line, hover cards, click popup)
-       └──→ ChatDock (suggestion list, route summary, selection controls)
-```
+Frontend optional variable:
 
----
+| Variable | Purpose | Default |
+|---|---|---|
+| `VITE_API_BASE_URL` | Base URL for auth requests | empty (same-origin) |
 
-## Project structure
-```
-luke-hacks/
-├── Program.cs                        # ASP.NET Core entry point (stub)
-├── frontend/
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   ├── postcss.config.js
-│   ├── tsconfig.json
-│   └── src/
-│       ├── main.tsx                   # React entry, BrowserRouter
-│       ├── App.tsx                    # Routes, MapLayout (lifted state)
-│       ├── index.css                  # Tailwind + glass utility
-│       ├── types/
-│       │   └── map.ts                # LngLat, POI types
-│       ├── hooks/
-│       │   ├── useUserLocation.ts    # Geolocation watch + heading
-│       │   └── useNearbyPOIs.ts      # Overpass query, distance sort
-│       ├── lib/
-│       │   └── osrm.ts              # OSRM route fetch
-│       ├── components/
-│       │   ├── MapView.tsx           # MapLibre map, layers, popups
-│       │   └── ChatDock.tsx          # Sidebar with suggestions
-│       └── pages/
-│           └── Dashboard.tsx         # Strava-style dashboard
-└── README.md
-```
+Google key requirements:
+- Enable `Places API (New)`
+- Enable `Routes API`
 
----
+Database defaults:
+- Development profile (`ASPNETCORE_ENVIRONMENT=Development`) uses `luke-hacks.dev.db`
+- Non-development fallback is `luke-hacks.db`
 
-## Getting started
+## Local development
 
 ### Prerequisites
+- .NET 8 SDK
 - Node.js 18+
-- .NET 8.0 SDK (for backend stub)
 
-### Installation
+### 1) Start backend
+
 ```bash
-git clone https://github.com/DovydasLatkauskas/Luke-hacks.git
-cd Luke-hacks/frontend
-npm install
+dotnet restore
+dotnet run
 ```
 
-### Run locally
+Default development URL from launch profile:
+- `http://localhost:5028`
+
+Swagger UI is enabled in development at:
+- `http://localhost:5028/swagger`
+
+The app creates the SQLite database automatically on startup (`EnsureCreated`).
+
+### 2) Start frontend
+
 ```bash
 cd frontend
+npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser. Allow location access when prompted — or it will fall back to Edinburgh.
+Vite dev server:
+- `http://localhost:5173`
+- Proxies `/api/*` to `http://localhost:5028`
 
-> GPS tracking requires HTTPS in production. Chrome allows `localhost` to use the Geolocation API without SSL.
+### 3) Use the app
 
----
+1. Open `http://localhost:5173`
+2. Register an account or sign in
+3. Allow browser location permission
+4. Build a manual route or submit an AI prompt
 
-## External APIs used
+## API endpoints used by the frontend
 
-| API | Purpose | Auth required |
+| Endpoint | Method | Purpose |
 |---|---|---|
-| [Overpass API](https://overpass-api.de/) | Query nearby cafes/pubs from OpenStreetMap | No |
-| [OSRM](https://router.project-osrm.org/) | Walking route geometry (public demo server) | No |
-| [OpenStreetMap tiles](https://tile.openstreetmap.org/) | Raster map basemap | No |
-| [MapLibre demo glyphs](https://demotiles.maplibre.org/) | Font glyphs for map labels | No |
+| `/api/auth/register` | `POST` | Create account |
+| `/api/auth/login` | `POST` | Return bearer tokens |
+| `/api/auth/me` | `GET` | Return current user (auth required) |
+| `/api/agent/plan` | `POST` | Prompt + location -> planned places + optional route |
+| `/api/agent/plan/iterative` | `POST` | Step-by-step route planning session |
+| `/api/google/route` | `POST` | Compute route from origin + waypoints |
 
-All APIs are free and require no keys for the current implementation.
+## Notes
 
----
+- Manual mode works without OpenAI/Google keys.
+- AI mode requires both `OPENAI_API_KEY` and `GOOGLE_MAPS_API_KEY`.
+- CORS currently allows local frontend origins on port `5173`.
+- Dockerfile builds and runs the backend service only.
+- In non-development environments, backend enables HTTPS redirection.
 
-## Roadmap
+## Project structure
 
-- [ ] AI agent (Claude) for natural-language route requests ("easy 5k with 2 coffee stops")
-- [ ] Live GPS tracking with pace/distance stats
-- [ ] Persist routes to Supabase
-- [ ] Elevation profile on route preview
-- [ ] Export to GPX
-- [ ] Social: share routes and compare with friends
-- [ ] Heart rate zone integration (Web Bluetooth)
-- [ ] Offline mode: cache route geometry
-- [ ] Auto day/night switch based on local time
-
----
-
-## License
-
-MIT
+```text
+luke-hacks/
+├── Program.cs
+├── Configuration/
+├── Data/
+├── Models/
+├── Services/
+├── Properties/
+├── frontend/
+└── README.md
+```

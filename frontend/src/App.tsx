@@ -33,6 +33,7 @@ function MapLayout({
   const [routeSegments, setRouteSegments] = useState<RouteSegment[]>([])
   const [activePoi, setActivePoi] = useState<POI | null>(null)
   const [ignoredIds, setIgnoredIds] = useState<string[]>([])
+
   const routeAbortRef = useRef<AbortController | null>(null)
 
   const excludeIds = useMemo(
@@ -43,40 +44,48 @@ function MapLayout({
   const lastSelectedPoi = allSelectedPois.length > 0
     ? allSelectedPois[allSelectedPois.length - 1]
     : null
-  const queryCenter: LngLat = lastSelectedPoi
+
+  const queryCenter: LngLat | null = lastSelectedPoi
     ? { lng: lastSelectedPoi.lng, lat: lastSelectedPoi.lat }
     : center
 
   const { pois: suggestedPois } = useNearbyPOIs(queryCenter, mode, excludeIds)
 
-  useEffect(() => {
+  const clearSelections = useCallback(() => {
     setSelectedIds([])
     setAllSelectedPois([])
     setRouteSegments([])
     setActivePoi(null)
     setIgnoredIds([])
-  }, [mode])
+  }, [])
 
   useEffect(() => {
+    routeAbortRef.current?.abort()
+
     if (!loc || allSelectedPois.length === 0) {
       setRouteSegments([])
       return
     }
 
-    routeAbortRef.current?.abort()
     const ctrl = new AbortController()
     routeAbortRef.current = ctrl
 
     const waypoints: LngLat[] = [
-      loc,
+      center,
       ...allSelectedPois.map((p) => ({ lng: p.lng, lat: p.lat })),
     ]
+
     fetchRouteSegments(waypoints, ctrl.signal).then((segs) => {
       if (!ctrl.signal.aborted) setRouteSegments(segs)
+    }).catch((err) => {
+      if (!ctrl.signal.aborted) {
+        console.error('[OSRM]', err)
+        setRouteSegments([])
+      }
     })
 
     return () => ctrl.abort()
-  }, [loc, allSelectedPois])
+  }, [center, loc, allSelectedPois])
 
   const handleSelectWaypoint = useCallback(
     (poiId: string) => {
@@ -89,6 +98,7 @@ function MapLayout({
         setSelectedIds((prev) => [...prev, poiId])
         setAllSelectedPois((prev) => [...prev, poi])
       }
+
       setActivePoi(null)
     },
     [selectedIds, suggestedPois],
@@ -170,8 +180,9 @@ function MapLayout({
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('day')
-  const toggleMode = () => setMode((prev) => (prev === 'day' ? 'night' : 'day'))
   const [mapMode, setMapMode] = useState<MapDimension>('2d')
+
+  const toggleMode = () => setMode((prev) => (prev === 'day' ? 'night' : 'day'))
   const toggleMapMode = () => setMapMode((prev) => (prev === '2d' ? '3d' : '2d'))
 
   return (
@@ -184,3 +195,4 @@ export default function App() {
     </Routes>
   )
 }
+

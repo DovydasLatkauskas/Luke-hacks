@@ -62,6 +62,10 @@ function createArrowImage(): ImageData {
   return ctx.getImageData(0, 0, size, size)
 }
 
+function poiTypeLabel(poi: POI, mode: Mode): string {
+  return poi.primaryTypeLabel ?? (mode === 'day' ? 'Cafe' : 'Pub')
+}
+
 function poiToGeoJSON(
   pois: POI[],
   selectedIds: string[],
@@ -361,11 +365,11 @@ export function MapView({
           'text-allow-overlap': false,
         },
         paint: {
-          // White labels so they remain legible on both
-          // light and dark basemaps.
-          'text-color': '#ffffff',
-          'text-halo-color': '#020617',
-          'text-halo-width': 1.5,
+          // Clean labels with no heavy dark background,
+          // so they stay readable on both light + dark.
+          'text-color': '#f9fafb',
+          'text-halo-color': 'rgba(15,23,42,0.0)',
+          'text-halo-width': 0,
           'text-opacity': ['case', ['==', ['get', 'selected'], 1], 1, 0.65],
         },
       })
@@ -618,7 +622,7 @@ export function MapView({
             <div className="mt-0.5 flex items-center gap-1.5 text-[10px] opacity-60">
               <span>{fmtDist(hoverCard.poi.distance)}</span>
               <span>·</span>
-              <span>{isDay ? 'Cafe' : 'Pub'}</span>
+              <span>{poiTypeLabel(hoverCard.poi, mode)}</span>
             </div>
             {selectedIds.includes(hoverCard.poi.id) ? (
               <div className="mt-1 text-[10px] font-semibold text-emerald-600">On your route</div>
@@ -682,8 +686,13 @@ export function MapView({
             </div>
             <div className="mb-2.5 text-[11px] opacity-60">
               {fmtDist(activePoi.distance)}
-              {' · '}{isDay ? 'Cafe' : 'Pub'}
+              {' · '}{poiTypeLabel(activePoi, mode)}
             </div>
+            {activePoi.address && (
+              <div className="mb-2 text-[11px] leading-relaxed opacity-55">
+                {activePoi.address}
+              </div>
+            )}
             <button
               type="button"
               onClick={() => onSelectWaypoint(activePoi.id)}
@@ -698,6 +707,21 @@ export function MapView({
             >
               {selectedIds.includes(activePoi.id) ? 'Remove from route' : 'Add to route'}
             </button>
+            {activePoi.mapsUri && (
+              <a
+                href={activePoi.mapsUri}
+                target="_blank"
+                rel="noreferrer"
+                className={[
+                  'mt-2 block rounded-xl px-3 py-1.5 text-center text-xs font-semibold transition',
+                  isDay
+                    ? 'bg-slate-900/5 text-slate-700 hover:bg-slate-900/10'
+                    : 'bg-white/5 text-slate-100 hover:bg-white/10',
+                ].join(' ')}
+              >
+                Open in Google Maps
+              </a>
+            )}
           </div>
         </div>
       )}

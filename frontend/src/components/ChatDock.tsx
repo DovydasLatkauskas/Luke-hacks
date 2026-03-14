@@ -22,6 +22,7 @@ export function ChatDock({ mode }: Props) {
       text: 'Hey! Tell me what kind of route you want and I\'ll plan it for you. Try "easy 5k coffee loop" or "pub crawl along the river".',
     },
   ])
+
   const isDay = mode === 'day'
   let nextId = messages.length
 
@@ -152,3 +153,4 @@ export function ChatDock({ mode }: Props) {
     </div>
   )
 }
+

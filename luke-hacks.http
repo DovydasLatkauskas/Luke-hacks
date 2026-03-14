@@ -1,25 +1,79 @@
-@luke_hacks_HostAddress = http://localhost:5149
+@luke_hacks_HostAddress = http://localhost:5028
 
-### Search POIs - cafes and parks in Edinburgh (day)
-POST {{luke_hacks_HostAddress}}/api/pois/search
+### Register
+POST {{luke_hacks_HostAddress}}/api/auth/register
 Content-Type: application/json
 
 {
-  "types": ["cafe", "park"],
-  "location": { "lat": 55.9533, "lng": -3.1883 },
-  "radiusKm": 2,
-  "timeOfDay": "day"
+  "email": "demo@example.com",
+  "password": "password123"
 }
 
-### Search POIs - pubs and bars in Edinburgh (night)
-POST {{luke_hacks_HostAddress}}/api/pois/search
+### Login
+POST {{luke_hacks_HostAddress}}/api/auth/login
 Content-Type: application/json
 
 {
-  "types": ["pub", "bar", "nightclub"],
-  "location": { "lat": 55.9533, "lng": -3.1883 },
-  "radiusKm": 1.5,
-  "timeOfDay": "night"
+  "email": "demo@example.com",
+  "password": "password123"
+}
+
+### Current user
+GET {{luke_hacks_HostAddress}}/api/auth/me
+Authorization: Bearer {{accessToken}}
+
+### Iterative route planning - step 1 (returns first 5 options + session)
+POST {{luke_hacks_HostAddress}}/api/agent/plan/iterative
+Content-Type: application/json
+
+{
+  "prompt": "I am going on a run, find me a route with 4 cafes on the way",
+  "currentLocation": { "lat": 55.9533, "lng": -3.1883 },
+  "session": null,
+  "selectedStops": []
+}
+
+### Iterative route planning - step 2 (pick one option from step 1)
+POST {{luke_hacks_HostAddress}}/api/agent/plan/iterative
+Content-Type: application/json
+
+{
+  "prompt": null,
+  "currentLocation": { "lat": 55.9533, "lng": -3.1883 },
+  "session": {
+    "intentSummary": "Morning coffee run",
+    "searchQuery": "cafes",
+    "radiusMeters": 2500,
+    "routeStopCount": 4,
+    "openNow": false,
+    "planSummary": "Pick a nearby cafe at each step and build a short route."
+  },
+  "selectedStops": [
+    { "id": "PLACE_ID_FROM_STEP_1", "name": "First stop", "lat": 55.9551, "lng": -3.1912 }
+  ]
+}
+
+### Iterative route planning - final step (route returned when selectedStops reaches target)
+POST {{luke_hacks_HostAddress}}/api/agent/plan/iterative
+Content-Type: application/json
+
+{
+  "prompt": null,
+  "currentLocation": { "lat": 55.9533, "lng": -3.1883 },
+  "session": {
+    "intentSummary": "Morning coffee run",
+    "searchQuery": "cafes",
+    "radiusMeters": 2500,
+    "routeStopCount": 4,
+    "openNow": false,
+    "planSummary": "Pick a nearby cafe at each step and build a short route."
+  },
+  "selectedStops": [
+    { "id": "PLACE_1", "name": "Stop 1", "lat": 55.9551, "lng": -3.1912 },
+    { "id": "PLACE_2", "name": "Stop 2", "lat": 55.9573, "lng": -3.1865 },
+    { "id": "PLACE_3", "name": "Stop 3", "lat": 55.9594, "lng": -3.1808 },
+    { "id": "PLACE_4", "name": "Stop 4", "lat": 55.9610, "lng": -3.1761 }
+  ]
 }
 
 ###
