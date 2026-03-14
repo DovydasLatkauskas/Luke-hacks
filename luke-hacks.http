@@ -76,4 +76,46 @@ Content-Type: application/json
   ]
 }
 
+### Create collaborative planning room
+POST {{luke_hacks_HostAddress}}/api/collaborative-planning/chats
+Content-Type: application/json
+Authorization: Bearer {{accessToken}}
+
+{
+  "expectedParticipantCount": 4,
+  "joinTimeoutSeconds": 300,
+  "title": "Saturday run + cafe plan"
+}
+
+### Join collaborative room by invite token
+POST {{luke_hacks_HostAddress}}/api/collaborative-planning/chats/join/{{inviteToken}}
+Authorization: Bearer {{accessToken}}
+
+### Submit constraints
+POST {{luke_hacks_HostAddress}}/api/collaborative-planning/chats/{{chatId}}/constraints
+Content-Type: application/json
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Alice",
+  "budget": "mid",
+  "dietary": "vegetarian",
+  "location": "New Town",
+  "mood": "lively",
+  "time": "mid evening (8-10pm)"
+}
+
+### Get collaborative room status
+GET {{luke_hacks_HostAddress}}/api/collaborative-planning/chats/{{chatId}}
+Authorization: Bearer {{accessToken}}
+
+### Submit collaborative veto
+POST {{luke_hacks_HostAddress}}/api/collaborative-planning/chats/{{chatId}}/veto
+Content-Type: application/json
+Authorization: Bearer {{accessToken}}
+
+{
+  "reason": "Need a cheaper dinner option and closer final bar."
+}
+
 ###

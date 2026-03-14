@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router-dom'
-import { openStream, submitVeto, getSession } from '../lib/roundtable'
+import { useParams } from 'react-router-dom'
+import { getSession, streamSession, submitVeto } from '../lib/roundtable'
 import type {
   AgentColumn,
   AgentMessage,
@@ -32,17 +32,6 @@ const SLOT_ICONS: Record<string, string> = {
   pre_drinks: '🍸',
   dinner: '🍽️',
   bar: '🎶',
-}
-
-function getUserId(searchParams: URLSearchParams): string {
-  const fromUrl = searchParams.get('user_id')
-  if (fromUrl) return fromUrl
-  let id = sessionStorage.getItem('roundtable_user_id')
-  if (!id) {
-    id = crypto.randomUUID()
-    sessionStorage.setItem('roundtable_user_id', id)
-  }
-  return id
 }
 
 function TypingDots() {
@@ -79,8 +68,6 @@ function VenueCard({ venue }: { venue: VenueSlot }) {
 
 export default function NegotiationRoom() {
   const { sessionId } = useParams<{ sessionId: string }>()
-  const [searchParams] = useSearchParams()
-  const userId = getUserId(searchParams)
 
   const [currentPhase, setCurrentPhase] = useState<string>('research')
   const [currentRound, setCurrentRound] = useState(1)
@@ -93,106 +80,119 @@ export default function NegotiationRoom() {
   const [vetoInput, setVetoInput] = useState('')
   const [showVetoInput, setShowVetoInput] = useState(false)
 
-  const esRef = useRef<EventSource | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const bottomRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const streamAbortRef = useRef<AbortController | null>(null)
 
-  // Fetch expected_count so we can pre-render columns
   useEffect(() => {
     if (!sessionId) return
     getSession(sessionId)
-      .then(s => setExpectedCount(s.expected_count))
+      .then(s => setExpectedCount(s.expectedParticipantCount))
       .catch(() => {})
   }, [sessionId])
 
-  // SSE connection
   useEffect(() => {
     if (!sessionId) return
 
-    const es = openStream(sessionId, userId)
-    esRef.current = es
+    const ctrl = new AbortController()
+    streamAbortRef.current = ctrl
 
-    es.addEventListener('phase', (e: MessageEvent) => {
-      const data = JSON.parse(e.data) as PhaseEvent
-      setCurrentPhase(data.phase)
-      setCurrentRound(data.round)
-    })
-
-    es.addEventListener('thinking', (e: MessageEvent) => {
-      const data = JSON.parse(e.data) as ThinkingEvent
-      setAgents(prev => {
-        const next = new Map(prev)
-        const existing = next.get(data.agent_id) ?? {
-          agent_id: data.agent_id,
-          name: data.agent_id,
-          thinking: false,
-          messages: [],
-        }
-        next.set(data.agent_id, { ...existing, thinking: data.thinking })
-        return next
-      })
-    })
-
-    es.addEventListener('message', (e: MessageEvent) => {
-      const data = JSON.parse(e.data) as AgentMessage
-      setAgents(prev => {
-        const next = new Map(prev)
-        const existing = next.get(data.agent_id) ?? {
-          agent_id: data.agent_id,
-          name: data.agent_name,
-          thinking: false,
-          messages: [],
-        }
-        next.set(data.agent_id, {
-          ...existing,
-          name: data.agent_name,
-          thinking: false,
-          messages: [...existing.messages, data],
-        })
-        return next
-      })
-      // Scroll to bottom of that agent's column
-      setTimeout(() => {
-        bottomRefs.current.get(data.agent_id)?.scrollIntoView({ behavior: 'smooth' })
-      }, 50)
-    })
-
-    es.addEventListener('result', (e: MessageEvent) => {
-      const data = JSON.parse(e.data)
-      setResult(data.itinerary as ItineraryResult)
-      setCurrentPhase('done')
-      // Start veto countdown
-      let t = 20
-      setVetoCountdown(t)
-      countdownRef.current = setInterval(() => {
-        t -= 1
-        setVetoCountdown(t)
-        if (t <= 0) {
-          clearInterval(countdownRef.current!)
-          setVetoCountdown(null)
-        }
-      }, 1000)
-    })
-
-    es.addEventListener('error', (e: MessageEvent) => {
+    const handleEvent = (eventType: string, payload: string) => {
       try {
-        const data = JSON.parse(e.data)
-        setError(data.message)
+        if (eventType === 'phase') {
+          const data = JSON.parse(payload) as PhaseEvent
+          setCurrentPhase(data.phase)
+          setCurrentRound(data.round)
+          return
+        }
+
+        if (eventType === 'thinking') {
+          const data = JSON.parse(payload) as ThinkingEvent
+          setAgents(prev => {
+            const next = new Map(prev)
+            const existing = next.get(data.agent_id) ?? {
+              agent_id: data.agent_id,
+              name: data.agent_id,
+              thinking: false,
+              messages: [],
+            }
+            next.set(data.agent_id, { ...existing, thinking: data.thinking })
+            return next
+          })
+          return
+        }
+
+        if (eventType === 'message') {
+          const data = JSON.parse(payload) as AgentMessage
+          setAgents(prev => {
+            const next = new Map(prev)
+            const existing = next.get(data.agent_id) ?? {
+              agent_id: data.agent_id,
+              name: data.agent_name,
+              thinking: false,
+              messages: [],
+            }
+            next.set(data.agent_id, {
+              ...existing,
+              name: data.agent_name,
+              thinking: false,
+              messages: [...existing.messages, data],
+            })
+            return next
+          })
+          setTimeout(() => {
+            bottomRefs.current.get(data.agent_id)?.scrollIntoView({ behavior: 'smooth' })
+          }, 50)
+          return
+        }
+
+        if (eventType === 'result') {
+          const data = JSON.parse(payload) as { itinerary: ItineraryResult }
+          setResult(data.itinerary)
+          setCurrentPhase('done')
+          setVetoSubmitted(false)
+          setShowVetoInput(false)
+          setVetoInput('')
+
+          let t = 20
+          setVetoCountdown(t)
+          if (countdownRef.current) clearInterval(countdownRef.current)
+          countdownRef.current = setInterval(() => {
+            t -= 1
+            setVetoCountdown(t)
+            if (t <= 0 && countdownRef.current) {
+              clearInterval(countdownRef.current)
+              setVetoCountdown(null)
+            }
+          }, 1000)
+          return
+        }
+
+        if (eventType === 'error') {
+          const data = JSON.parse(payload) as { message?: string }
+          setError(data.message ?? 'An error occurred during collaborative planning.')
+        }
       } catch {
-        // SSE connection error (not our payload error)
+        // Ignore malformed events.
+      }
+    }
+
+    streamSession(sessionId, handleEvent, ctrl.signal).catch(err => {
+      if (!ctrl.signal.aborted) {
+        setError(err instanceof Error ? err.message : 'Stream disconnected.')
       }
     })
 
     return () => {
-      es.close()
+      ctrl.abort()
       if (countdownRef.current) clearInterval(countdownRef.current)
     }
-  }, [sessionId, userId])
+  }, [sessionId])
 
   async function handleVeto() {
     if (!sessionId || vetoSubmitted || !vetoInput.trim()) return
     try {
-      await submitVeto(sessionId, userId, vetoInput)
+      await submitVeto(sessionId, vetoInput)
       setVetoSubmitted(true)
       setShowVetoInput(false)
       setResult(null)
@@ -204,15 +204,11 @@ export default function NegotiationRoom() {
   }
 
   const agentList = Array.from(agents.values())
-
-  // Pre-render placeholder columns if we know expected_count
   const columnCount = Math.max(agentList.length, expectedCount)
-
   const phaseIndex = PHASES.indexOf(currentPhase as typeof PHASES[number])
 
   return (
     <div className="h-screen bg-slate-900 text-white flex flex-col overflow-hidden">
-      {/* Phase bar */}
       <div className="flex-none border-b border-slate-700 px-4 py-3">
         <div className="flex items-center gap-2 flex-wrap">
           {PHASES.map((p, i) => {
@@ -220,7 +216,7 @@ export default function NegotiationRoom() {
             const isDone = phaseIndex > i
             return (
               <div key={p} className="flex items-center gap-2">
-                {i > 0 && <span className="text-slate-600">→</span>}
+                {i > 0 && <span className="text-slate-600">{'->'}</span>}
                 <span
                   className={`text-sm px-3 py-1 rounded-full font-medium transition-colors ${
                     isActive
@@ -244,9 +240,7 @@ export default function NegotiationRoom() {
         )}
       </div>
 
-      {/* Main area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Agent columns */}
         <div
           className="flex-1 flex overflow-x-auto overflow-y-hidden divide-x divide-slate-700/50"
           style={{ minWidth: 0 }}
@@ -260,7 +254,6 @@ export default function NegotiationRoom() {
 
             return (
               <div key={agentId} className="flex-1 min-w-[200px] flex flex-col">
-                {/* Column header */}
                 <div className="flex-none px-3 py-2 bg-slate-800/50 border-b border-slate-700/50">
                   <div className="flex items-center gap-2">
                     <div
@@ -272,7 +265,6 @@ export default function NegotiationRoom() {
                   </div>
                 </div>
 
-                {/* Messages */}
                 <div className="flex-1 overflow-y-auto p-3 space-y-2">
                   {messages.map((msg, i) => (
                     <div
@@ -293,7 +285,6 @@ export default function NegotiationRoom() {
           })}
         </div>
 
-        {/* Result panel */}
         {result && (
           <div className="flex-none w-72 border-l border-slate-700 flex flex-col bg-slate-800/30 overflow-y-auto">
             <div className="p-4 space-y-4">
@@ -307,7 +298,6 @@ export default function NegotiationRoom() {
 
               <p className="text-sm text-slate-300 leading-relaxed">{result.summary}</p>
 
-              {/* Veto section */}
               {!vetoSubmitted && vetoCountdown !== null && vetoCountdown > 0 && (
                 <div className="border border-slate-600 rounded-xl p-3 space-y-2">
                   {!showVetoInput ? (
@@ -349,7 +339,7 @@ export default function NegotiationRoom() {
 
               {vetoSubmitted && (
                 <div className="text-xs text-amber-400 text-center py-2">
-                  Veto submitted — agents are re-negotiating...
+                  Veto submitted, agents are re-negotiating...
                 </div>
               )}
             </div>

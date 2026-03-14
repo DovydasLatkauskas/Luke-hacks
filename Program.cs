@@ -18,8 +18,10 @@ builder.Services.AddProblemDetails();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient<OpenAiPlanningService>();
 builder.Services.AddHttpClient<GoogleMapsService>();
+builder.Services.AddHttpClient<RoundtableEngineClient>();
 builder.Services.Configure<OpenAiOptions>(builder.Configuration.GetSection("OpenAI"));
 builder.Services.Configure<GoogleMapsOptions>(builder.Configuration.GetSection("GoogleMaps"));
+builder.Services.Configure<RoundtableOptions>(builder.Configuration.GetSection("Roundtable"));
 builder.Services.PostConfigure<OpenAiOptions>(options =>
 {
     options.ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? options.ApiKey;
@@ -28,6 +30,10 @@ builder.Services.PostConfigure<OpenAiOptions>(options =>
 builder.Services.PostConfigure<GoogleMapsOptions>(options =>
 {
     options.ApiKey = Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY") ?? options.ApiKey;
+});
+builder.Services.PostConfigure<RoundtableOptions>(options =>
+{
+    options.BaseUrl = Environment.GetEnvironmentVariable("ROUNDTABLE_BASE_URL") ?? options.BaseUrl;
 });
 builder.Services.AddCors(options =>
 {
@@ -56,6 +62,8 @@ builder.Services.AddIdentityApiEndpoints<ApplicationUser>(options =>
     options.Password.RequireNonAlphanumeric = false;
 })
 .AddEntityFrameworkStores<AppDbContext>();
+builder.Services.AddScoped<CollaborativePlanningService>();
+builder.Services.AddHostedService<CollaborativePlanningTimeoutWorker>();
 
 var app = builder.Build();
 
@@ -85,6 +93,270 @@ authGroup.MapGet("/me", async (ClaimsPrincipal user, UserManager<ApplicationUser
 })
 .RequireAuthorization()
 .WithName("GetCurrentUser")
+.WithOpenApi();
+
+var collaborativePlanningGroup = app.MapGroup("/api/collaborative-planning")
+    .RequireAuthorization();
+
+collaborativePlanningGroup.MapPost("/chats", async (
+    CreateCollaborativePlanningChatRequest request,
+    ClaimsPrincipal user,
+    UserManager<ApplicationUser> userManager,
+    CollaborativePlanningService collaborativePlanning,
+    CancellationToken cancellationToken) =>
+{
+    var currentUser = await userManager.GetUserAsync(user);
+    if (currentUser is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        var chat = await collaborativePlanning.CreateChatAsync(
+            currentUser.Id,
+            currentUser.Email,
+            request,
+            cancellationToken);
+        return Results.Ok(chat);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
+    }
+})
+.WithName("CreateCollaborativePlanningChat")
+.WithOpenApi();
+
+collaborativePlanningGroup.MapPost("/chats/join/{inviteToken}", async (
+    string inviteToken,
+    ClaimsPrincipal user,
+    UserManager<ApplicationUser> userManager,
+    CollaborativePlanningService collaborativePlanning,
+    CancellationToken cancellationToken) =>
+{
+    var currentUser = await userManager.GetUserAsync(user);
+    if (currentUser is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        var chat = await collaborativePlanning.JoinByInviteAsync(
+            inviteToken,
+            currentUser.Id,
+            currentUser.Email,
+            cancellationToken);
+        return Results.Ok(chat);
+    }
+    catch (KeyNotFoundException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
+    }
+})
+.WithName("JoinCollaborativePlanningChatByInvite")
+.WithOpenApi();
+
+collaborativePlanningGroup.MapPost("/chats/{chatId:guid}/constraints", async (
+    Guid chatId,
+    SubmitCollaborativePlanningConstraintsRequest request,
+    ClaimsPrincipal user,
+    UserManager<ApplicationUser> userManager,
+    CollaborativePlanningService collaborativePlanning,
+    CancellationToken cancellationToken) =>
+{
+    var currentUser = await userManager.GetUserAsync(user);
+    if (currentUser is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        var chat = await collaborativePlanning.SubmitConstraintsAsync(chatId, currentUser.Id, request, cancellationToken);
+        return Results.Ok(chat);
+    }
+    catch (KeyNotFoundException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+    catch (UnauthorizedAccessException ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
+    }
+})
+.WithName("SubmitCollaborativePlanningConstraints")
+.WithOpenApi();
+
+collaborativePlanningGroup.MapGet("/chats/{chatId:guid}", async (
+    Guid chatId,
+    ClaimsPrincipal user,
+    UserManager<ApplicationUser> userManager,
+    CollaborativePlanningService collaborativePlanning,
+    CancellationToken cancellationToken) =>
+{
+    var currentUser = await userManager.GetUserAsync(user);
+    if (currentUser is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        var chat = await collaborativePlanning.GetChatAsync(chatId, currentUser.Id, cancellationToken);
+        return Results.Ok(chat);
+    }
+    catch (KeyNotFoundException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+    catch (UnauthorizedAccessException ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
+    }
+})
+.WithName("GetCollaborativePlanningChat")
+.WithOpenApi();
+
+collaborativePlanningGroup.MapPost("/chats/{chatId:guid}/veto", async (
+    Guid chatId,
+    SubmitCollaborativePlanningVetoRequest request,
+    ClaimsPrincipal user,
+    UserManager<ApplicationUser> userManager,
+    CollaborativePlanningService collaborativePlanning,
+    CancellationToken cancellationToken) =>
+{
+    var currentUser = await userManager.GetUserAsync(user);
+    if (currentUser is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        await collaborativePlanning.SubmitVetoAsync(chatId, currentUser.Id, request.Reason, cancellationToken);
+        return Results.Ok(new { ok = true });
+    }
+    catch (KeyNotFoundException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+    catch (UnauthorizedAccessException ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
+    }
+})
+.WithName("SubmitCollaborativePlanningVeto")
+.WithOpenApi();
+
+collaborativePlanningGroup.MapGet("/chats/{chatId:guid}/stream", async (
+    Guid chatId,
+    long? afterEventId,
+    ClaimsPrincipal user,
+    UserManager<ApplicationUser> userManager,
+    AppDbContext dbContext,
+    HttpContext httpContext,
+    CancellationToken cancellationToken) =>
+{
+    var currentUser = await userManager.GetUserAsync(user);
+    if (currentUser is null)
+    {
+        httpContext.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return;
+    }
+
+    var isMember = await dbContext.CollaborativePlanningParticipants
+        .AnyAsync(participant => participant.ChatId == chatId && participant.UserId == currentUser.Id, cancellationToken);
+    if (!isMember)
+    {
+        httpContext.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return;
+    }
+
+    httpContext.Response.Headers.CacheControl = "no-cache";
+    httpContext.Response.Headers.Connection = "keep-alive";
+    httpContext.Response.ContentType = "text/event-stream";
+
+    var lastEventId = Math.Max(0, afterEventId ?? 0);
+    var heartbeatCountdown = 0;
+
+    while (!cancellationToken.IsCancellationRequested)
+    {
+        var events = await dbContext.CollaborativePlanningEvents
+            .AsNoTracking()
+            .Where(evt => evt.ChatId == chatId && evt.Id > lastEventId)
+            .OrderBy(evt => evt.Id)
+            .Take(250)
+            .ToListAsync(cancellationToken);
+
+        foreach (var evt in events)
+        {
+            await httpContext.Response.WriteAsync($"id: {evt.Id}\n", cancellationToken);
+            await httpContext.Response.WriteAsync($"event: {evt.EventType}\n", cancellationToken);
+
+            foreach (var line in evt.PayloadJson.Split('\n'))
+            {
+                await httpContext.Response.WriteAsync($"data: {line}\n", cancellationToken);
+            }
+
+            await httpContext.Response.WriteAsync("\n", cancellationToken);
+            lastEventId = evt.Id;
+        }
+
+        if (events.Count > 0)
+        {
+            await httpContext.Response.Body.FlushAsync(cancellationToken);
+            heartbeatCountdown = 0;
+        }
+        else
+        {
+            heartbeatCountdown++;
+            if (heartbeatCountdown >= 15)
+            {
+                await httpContext.Response.WriteAsync(": keepalive\n\n", cancellationToken);
+                await httpContext.Response.Body.FlushAsync(cancellationToken);
+                heartbeatCountdown = 0;
+            }
+        }
+
+        var status = await dbContext.CollaborativePlanningChats
+            .AsNoTracking()
+            .Where(chat => chat.Id == chatId)
+            .Select(chat => chat.Status)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (status is null)
+        {
+            return;
+        }
+
+        if ((status == CollaborativePlanningStatus.Completed || status == CollaborativePlanningStatus.Failed) &&
+            events.Count == 0)
+        {
+            return;
+        }
+
+        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+    }
+})
+.WithName("StreamCollaborativePlanningEvents")
 .WithOpenApi();
 
 app.MapPost("/api/agent/plan", async (
