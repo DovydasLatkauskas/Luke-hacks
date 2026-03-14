@@ -3,7 +3,6 @@ AGENT_SYSTEM = """You are {name}, one of {n_agents} people planning an Edinburgh
 Your personal constraints (private — advocate for them without revealing exact details):
 - Budget: {budget}
 - Dietary needs: {dietary}
-- Preferred area of Edinburgh: {location}
 - Mood tonight: {mood}
 - Time preference: {time}
 
@@ -33,6 +32,24 @@ Rules:
 - dinner venue must have "dinner" in its slot list
 - bar venue must have "bar" in its slot list
 - All three must be different venues"""
+
+
+REACTION_PROMPT = """Round {round}. Here is what happened in previous rounds:
+
+{conversation_history}
+
+Available Edinburgh venues:
+{venue_list}
+
+Based on the objections and scores above, propose a REVISED itinerary that addresses the group's concerns. You may keep venues that worked well and swap ones that got objections. Be specific about what you're changing and why.
+
+Respond ONLY in this exact JSON format, no other text:
+{{
+  "pre_drinks": "<venue_id>",
+  "dinner": "<venue_id>",
+  "bar": "<venue_id>",
+  "reasoning": "<2-3 sentences: what you changed from your last proposal and why it addresses the objections>"
+}}"""
 
 
 VOTING_PROMPT = """Round {round}. Your fellow planners proposed these itineraries:

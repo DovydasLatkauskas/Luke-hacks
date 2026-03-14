@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createSession, joinSession, getSession } from '../lib/roundtable'
 import type { UserConstraints, Budget } from '../types/roundtable'
 
-const NEIGHBOURHOODS = ['Old Town', 'New Town', 'Leith', 'Stockbridge', 'Grassmarket', 'West End', 'Morningside', 'Haymarket']
 const MOODS = ['lively', 'relaxed', 'romantic', 'hipster', 'classic', 'adventurous']
 const TIMES = ['early evening (6–8pm)', 'mid evening (8–10pm)', 'late night (10pm+)', 'all night']
 
@@ -33,10 +32,30 @@ export default function RoundTableLobby() {
     name: '',
     budget: 'mid',
     dietary: '',
-    location: 'New Town',
     mood: 'lively',
     time: 'mid evening (8–10pm)',
+    lat: null,
+    lng: null,
   })
+  const [locating, setLocating] = useState(false)
+  const [locError, setLocError] = useState<string | null>(null)
+
+  function getLocation() {
+    if (!navigator.geolocation) return setLocError('Geolocation not supported')
+    setLocating(true)
+    setLocError(null)
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setConstraints(c => ({ ...c, lat: pos.coords.latitude, lng: pos.coords.longitude }))
+        setLocating(false)
+      },
+      () => {
+        setLocError('Could not get location — venues will be based on Edinburgh city centre')
+        setLocating(false)
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    )
+  }
 
   const userId = getUserId()
 
@@ -131,29 +150,38 @@ export default function RoundTableLobby() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">Budget</label>
-                <select
-                  value={constraints.budget}
-                  onChange={e => setConstraints(c => ({ ...c, budget: e.target.value as Budget }))}
-                  className="w-full bg-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  <option value="budget">Budget (£)</option>
-                  <option value="mid">Mid-range (££)</option>
-                  <option value="splurge">Splurge (£££)</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">Preferred area</label>
-                <select
-                  value={constraints.location}
-                  onChange={e => setConstraints(c => ({ ...c, location: e.target.value }))}
-                  className="w-full bg-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  {NEIGHBOURHOODS.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </div>
+            <div>
+              <label className="block text-sm text-slate-300 mb-1">Your location</label>
+              <button
+                type="button"
+                onClick={getLocation}
+                disabled={locating}
+                className={`w-full rounded-lg px-3 py-2 text-sm text-left transition-colors ${
+                  constraints.lat
+                    ? 'bg-emerald-900/50 border border-emerald-700 text-emerald-300'
+                    : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                }`}
+              >
+                {locating
+                  ? 'Getting location...'
+                  : constraints.lat
+                    ? `Got it (${constraints.lat.toFixed(4)}, ${constraints.lng?.toFixed(4)})`
+                    : 'Share my location (recommended)'}
+              </button>
+              {locError && <p className="text-amber-400 text-xs mt-1">{locError}</p>}
+            </div>
+
+            <div>
+              <label className="block text-sm text-slate-300 mb-1">Budget</label>
+              <select
+                value={constraints.budget}
+                onChange={e => setConstraints(c => ({ ...c, budget: e.target.value as Budget }))}
+                className="w-full bg-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="budget">Budget (£)</option>
+                <option value="mid">Mid-range (££)</option>
+                <option value="splurge">Splurge (£££)</option>
+              </select>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

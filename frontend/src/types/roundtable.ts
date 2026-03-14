@@ -4,9 +4,10 @@ export type UserConstraints = {
   name: string
   budget: Budget
   dietary: string
-  location: string
   mood: string
   time: string
+  lat: number | null
+  lng: number | null
 }
 
 export type VenueSlot = {
