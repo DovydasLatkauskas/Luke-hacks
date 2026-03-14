@@ -5,6 +5,9 @@
 
 # dotenv files
 .env
+**/.venv/
+appsettings.Local.json
+appsettings.Development.Local.json
 *.tsbuildinfo
 *.db
 *.db-shm

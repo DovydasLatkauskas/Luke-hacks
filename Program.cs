@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Data Source=luke-hacks.db";
 var dataProtectionPath = Path.Combine(builder.Environment.ContentRootPath, ".keys");
