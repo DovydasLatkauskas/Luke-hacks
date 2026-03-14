@@ -12,6 +12,7 @@ type Props = {
   allSelectedPois: POI[]
   routeSegments: RouteSegment[]
   onRemove: (id: string) => void
+  onClearRoute?: () => void
 }
 
 function haversineM(
@@ -40,7 +41,7 @@ function fmtDist(m: number): string {
   return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`
 }
 
-export function RouteRibbon({ mode, allSelectedPois, routeSegments, onRemove }: Props) {
+export function RouteRibbon({ mode, allSelectedPois, routeSegments, onRemove, onClearRoute }: Props) {
   const isDay = mode === 'day'
   if (allSelectedPois.length === 0) return null
 
@@ -153,6 +154,21 @@ export function RouteRibbon({ mode, allSelectedPois, routeSegments, onRemove }: 
           >
             {fmtDist(totalDist)}
           </div>
+        )}
+
+        {onClearRoute && (
+          <button
+            type="button"
+            onClick={onClearRoute}
+            className={[
+              'ml-1 shrink-0 rounded-lg px-2 py-1 text-[10px] font-semibold transition',
+              isDay
+                ? 'bg-red-500/15 text-red-700 hover:bg-red-500/25'
+                : 'bg-red-400/15 text-red-300 hover:bg-red-400/25',
+            ].join(' ')}
+          >
+            Clear
+          </button>
         )}
       </div>
     </div>

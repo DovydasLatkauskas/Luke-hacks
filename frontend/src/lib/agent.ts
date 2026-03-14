@@ -1,4 +1,4 @@
-import type { ComputeGoogleRouteRequest, PlanAgentRequest, AgentPlan, PlannedRoute } from '../types/agent'
+import type { ComputeGoogleRouteRequest, PlanAgentRequest, AgentPlan, PlannedRoute, IterativeRequest, IterativeResponse } from '../types/agent'
 import type { POI } from '../types/map'
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {
@@ -83,6 +83,39 @@ export async function planWithOpenAiAgent(
   return {
     ...payload,
     places: payload.places.map(toPoi),
+  }
+}
+
+type RawIterativeResponse = Omit<IterativeResponse, 'nextOptions'> & {
+  nextOptions: Array<{
+    id: string
+    name: string
+    lat: number
+    lng: number
+    distanceMeters: number
+    address?: string | null
+    primaryType?: string | null
+    primaryTypeLabel?: string | null
+    googleMapsUri?: string | null
+  }>
+}
+
+export async function planIterative(
+  request: IterativeRequest,
+  signal?: AbortSignal,
+): Promise<IterativeResponse> {
+  const response = await fetch('/api/agent/plan/iterative', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal,
+  })
+
+  const payload = await parseJsonResponse<RawIterativeResponse>(response)
+
+  return {
+    ...payload,
+    nextOptions: payload.nextOptions.map(toPoi),
   }
 }
 
