@@ -89,12 +89,22 @@ public sealed class CollaborativePlanningService
         var existing = chat.Participants.FirstOrDefault(participant => participant.UserId == userId);
         if (existing is null)
         {
-            chat.Participants.Add(new CollaborativePlanningParticipant
-            {
-                UserId = userId,
-                DisplayName = userEmail,
-            });
-            await dbContext.SaveChangesAsync(cancellationToken);
+            var participantId = Guid.NewGuid();
+            var joinedAtUtc = DateTime.UtcNow;
+
+            await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                INSERT INTO "CollaborativePlanningParticipants"
+                    ("Id", "ChatId", "UserId", "DisplayName", "JoinedAtUtc", "ConstraintsSubmittedAtUtc", "ConstraintsJson")
+                SELECT
+                    {participantId}, {chat.Id}, {userId}, {userEmail}, {joinedAtUtc}, NULL, NULL
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM "CollaborativePlanningParticipants"
+                    WHERE "ChatId" = {chat.Id} AND "UserId" = {userId}
+                );
+                """,
+                cancellationToken);
         }
 
         return await ToResponseAsync(dbContext, chat.Id, userId, cancellationToken)
@@ -360,6 +370,10 @@ public sealed class CollaborativePlanningService
                 await dbContext.SaveChangesAsync(cancellationToken);
             }
         }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            _logger.LogWarning(ex, "Start-chat concurrency conflict for chat {ChatId}. A concurrent request likely already advanced room state.", chatId);
+        }
         finally
         {
             StartLock.Release();
@@ -517,6 +531,7 @@ public sealed class CollaborativePlanningService
     }
 
     private static string BuildInvitePath(string inviteToken) => $"/roundtable?invite={inviteToken}";
+
 
     private static async Task<CollaborativePlanningChatResponse?> ToResponseAsync(
         AppDbContext dbContext,
