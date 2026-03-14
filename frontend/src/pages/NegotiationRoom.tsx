@@ -69,6 +69,7 @@ function VenueCard({ venue }: { venue: VenueSlot }) {
 export default function NegotiationRoom() {
   const { sessionId } = useParams<{ sessionId: string }>()
 
+  const [streamKey, setStreamKey] = useState(0)
   const [currentPhase, setCurrentPhase] = useState<string>('research')
   const [currentRound, setCurrentRound] = useState(1)
   const [agents, setAgents] = useState<Map<string, AgentColumn>>(new Map())
@@ -93,6 +94,13 @@ export default function NegotiationRoom() {
 
   useEffect(() => {
     if (!sessionId) return
+
+    // Clear lingering thinking state from previous round
+    setAgents(prev => {
+      const next = new Map(prev)
+      for (const [id, agent] of next) next.set(id, { ...agent, thinking: false })
+      return next
+    })
 
     const ctrl = new AbortController()
     streamAbortRef.current = ctrl
@@ -187,7 +195,7 @@ export default function NegotiationRoom() {
       ctrl.abort()
       if (countdownRef.current) clearInterval(countdownRef.current)
     }
-  }, [sessionId])
+  }, [sessionId, streamKey])
 
   async function handleVeto() {
     if (!sessionId || vetoSubmitted || !vetoInput.trim()) return
@@ -198,6 +206,8 @@ export default function NegotiationRoom() {
       setResult(null)
       setVetoCountdown(null)
       if (countdownRef.current) clearInterval(countdownRef.current)
+      setCurrentPhase('research')
+      setStreamKey(k => k + 1)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Veto failed')
     }
@@ -205,7 +215,8 @@ export default function NegotiationRoom() {
 
   const agentList = Array.from(agents.values())
   const columnCount = Math.max(agentList.length, expectedCount)
-  const phaseIndex = PHASES.indexOf(currentPhase as typeof PHASES[number])
+  const isDone = currentPhase === 'done'
+  const phaseIndex = isDone ? PHASES.length : PHASES.indexOf(currentPhase as typeof PHASES[number])
 
   return (
     <div className="h-screen bg-slate-900 text-white flex flex-col overflow-hidden">
