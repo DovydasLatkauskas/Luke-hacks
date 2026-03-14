@@ -1,114 +1,168 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { Mode } from '../App'
-
-type Msg = { role: 'user' | 'assistant'; text: string }
+import type { POI } from '../types/map'
 
 type Props = {
   mode: Mode
+  pois: POI[]
+  allSelectedPois: POI[]
+  selectedIds: string[]
+  poisLoading: boolean
+  onSelectWaypoint: (id: string) => void
 }
 
-export function ChatDock({ mode }: Props) {
-  const [text, setText] = useState('')
-  const [msgs, setMsgs] = useState<Msg[]>([
-    {
-      role: 'assistant',
-      text: 'Tell me what you want to do: “easy 5k coffee loop” or “night bar hop near old town”.',
-    },
-  ])
+function fmtDist(m: number): string {
+  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`
+}
 
-  const canSend = useMemo(() => text.trim().length > 0, [text])
+export function ChatDock({
+  mode,
+  pois,
+  allSelectedPois,
+  selectedIds,
+  poisLoading,
+  onSelectWaypoint,
+}: Props) {
+  const [hover, setHover] = useState(false)
+  const isDay = mode === 'day'
+  const poiLabel = isDay ? 'Nearby cafes' : 'Nearby pubs'
+  const poiIcon = isDay ? '☕' : '🍺'
 
   return (
     <div className="pointer-events-none absolute bottom-4 left-4 z-10">
       <div
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
         className={[
-          'glass pointer-events-auto flex h-[80dvh] w-[min(440px,calc(100vw-2rem))] flex-col overflow-hidden rounded-3xl border shadow-[0_24px_90px_rgba(0,0,0,0.55)] ring-1',
-          mode === 'day'
-            ? 'border-slate-900/10 bg-white/80 text-slate-900 ring-white/40'
-            : 'border-white/10 bg-slate-950/35 text-slate-100 ring-white/5',
+          'glass pointer-events-auto flex h-[80dvh] w-[min(380px,calc(100vw-2rem))] flex-col overflow-hidden rounded-3xl border shadow-[0_24px_90px_rgba(0,0,0,0.35)] ring-1 transition-all duration-300',
+          isDay
+            ? 'border-slate-900/10 bg-white/35 text-slate-900 ring-white/30'
+            : 'border-white/10 bg-slate-950/25 text-slate-100 ring-white/5',
         ].join(' ')}
       >
+        {/* Floating header – appears on hover */}
+        <div
+          className={[
+            'absolute left-0 right-0 top-0 z-10 flex items-center justify-between rounded-t-3xl border-b px-4 py-2.5 transition-all duration-200',
+            isDay ? 'border-slate-900/10 bg-white/60' : 'border-white/10 bg-slate-950/50',
+            hover ? 'opacity-100' : 'pointer-events-none opacity-0',
+          ].join(' ')}
+        >
+          <span className="text-xs font-medium opacity-90">PaceRoute</span>
+          <Link
+            to="/dashboard"
+            className={[
+              'rounded-xl px-3 py-1.5 text-xs font-semibold transition',
+              isDay
+                ? 'bg-emerald-500/25 text-emerald-800 hover:bg-emerald-500/40'
+                : 'bg-emerald-400/25 text-emerald-100 hover:bg-emerald-400/40',
+            ].join(' ')}
+          >
+            Dashboard
+          </Link>
+        </div>
+
+        {/* Header */}
         <div
           className={[
             'flex items-center justify-between gap-3 border-b px-4 py-3',
-            mode === 'day' ? 'border-slate-900/10' : 'border-white/10',
+            isDay ? 'border-slate-900/10' : 'border-white/10',
           ].join(' ')}
         >
           <div>
-            <div className="text-sm font-semibold">Route chat</div>
-            <div className="text-xs opacity-80">
-              Iteratively suggest waypoints → you pick → route updates
+            <div className="text-sm font-semibold">Build your route</div>
+            <div className="text-xs opacity-70">
+              Tap a place to add it — route updates live
             </div>
           </div>
-          <div className="text-xs opacity-70">
-            {mode === 'day' ? 'Day' : 'Night'}
+          <div className="text-xs opacity-50">
+            {isDay ? 'Day' : 'Night'}
           </div>
         </div>
 
-        <div className="flex-1 space-y-3 overflow-auto px-4 py-4">
-          {msgs.map((m, idx) => (
-            <div
-              key={idx}
-              className={[
-                'max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-6',
-                m.role === 'user'
-                  ? mode === 'day'
-                    ? 'ml-auto bg-emerald-500/10 text-emerald-900 ring-1 ring-emerald-400/40'
-                    : 'ml-auto bg-emerald-400/15 text-emerald-50 ring-1 ring-emerald-300/15'
-                  : mode === 'day'
-                    ? 'bg-slate-900/5 text-slate-900 ring-1 ring-slate-900/10'
-                    : 'bg-white/10 text-slate-100 ring-1 ring-white/10',
-              ].join(' ')}
-            >
-              {m.text}
+        {/* Selected waypoints summary */}
+        {selectedIds.length > 0 && (
+          <div
+            className={[
+              'flex items-center gap-2 border-b px-4 py-2',
+              isDay ? 'border-slate-900/10' : 'border-white/10',
+            ].join(' ')}
+          >
+            <span className="text-xs font-medium opacity-70">Route:</span>
+            <div className="flex flex-1 flex-wrap gap-1">
+              {allSelectedPois.map((poi) => (
+                <button
+                  key={poi.id}
+                  type="button"
+                  onClick={() => onSelectWaypoint(poi.id)}
+                  className={[
+                    'rounded-lg px-2 py-0.5 text-[10px] font-semibold transition',
+                    isDay
+                      ? 'bg-emerald-500/25 text-emerald-800 hover:bg-red-500/20 hover:text-red-700'
+                      : 'bg-emerald-400/25 text-emerald-100 hover:bg-red-400/25 hover:text-red-200',
+                  ].join(' ')}
+                  title="Click to remove"
+                >
+                  {poi.name.length > 14 ? poi.name.slice(0, 12) + '…' : poi.name} ×
+                </button>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        )}
 
-        <form
-          className={['border-t p-3', mode === 'day' ? 'border-slate-900/10' : 'border-white/10'].join(
-            ' ',
+        {/* Suggestions list */}
+        <div className="flex-1 overflow-auto px-3 py-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-semibold opacity-70">{poiLabel}</span>
+            {poisLoading && (
+              <span className="text-[10px] opacity-50">Loading…</span>
+            )}
+          </div>
+
+          {pois.length === 0 && !poisLoading && (
+            <div className="py-6 text-center text-xs opacity-50">
+              No results nearby
+            </div>
           )}
-          onSubmit={(e) => {
-            e.preventDefault()
-            const trimmed = text.trim()
-            if (!trimmed) return
 
-            setMsgs((prev) => [
-              ...prev,
-              { role: 'user', text: trimmed },
-              {
-                role: 'assistant',
-                text: 'Nice — next I’ll suggest a few candidate waypoints near you (stub).',
-              },
-            ])
-            setText('')
-          }}
+          <ul className="space-y-1.5">
+            {pois.map((poi) => (
+              <li key={poi.id}>
+                <button
+                  type="button"
+                  onClick={() => onSelectWaypoint(poi.id)}
+                  className={[
+                    'flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm transition-all duration-200',
+                    isDay
+                      ? 'bg-white/40 text-slate-700 hover:bg-white/70'
+                      : 'bg-white/5 text-slate-300 hover:bg-white/10',
+                  ].join(' ')}
+                >
+                  <span className="text-base">{poiIcon}</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{poi.name}</span>
+                    <span className="text-[10px] opacity-50">{fmtDist(poi.distance)}</span>
+                  </div>
+                  <span className="shrink-0 text-[10px] opacity-40">+ add</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Footer summary */}
+        <div
+          className={[
+            'border-t px-4 py-2.5 text-center text-[11px] opacity-60',
+            isDay ? 'border-slate-900/10' : 'border-white/10',
+          ].join(' ')}
         >
-          <div className="flex items-end gap-2">
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              rows={2}
-              placeholder='Try: "Add 2 cafes and avoid hills"'
-              className={[
-                'max-h-28 flex-1 resize-none rounded-2xl border px-3 py-2 text-sm outline-none placeholder:opacity-60 focus:border-emerald-300/50 focus:ring-2 focus:ring-emerald-300/15',
-                mode === 'day'
-                  ? 'border-slate-900/15 bg-white/80 text-slate-900'
-                  : 'border-white/10 bg-slate-950/30 text-slate-100',
-              ].join(' ')}
-            />
-            <button
-              type="submit"
-              disabled={!canSend}
-              className="rounded-2xl bg-emerald-400/90 px-4 py-2 text-sm font-semibold text-slate-950 shadow-sm transition enabled:hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Send
-            </button>
-          </div>
-        </form>
+          {selectedIds.length === 0
+            ? 'Select places to build your route'
+            : `${selectedIds.length} stop${selectedIds.length > 1 ? 's' : ''} on your route`}
+        </div>
       </div>
     </div>
   )
 }
-
