@@ -3,8 +3,9 @@
 PaceRoute is an ASP.NET Core + React app for local outing planning.  
 Current source includes:
 - Manual map route building (frontend)
+- AI route assistant in the map chat dock
 - Collaborative multi-user planning rooms powered by a Roundtable negotiation engine
-- Legacy AI route-planning endpoints (`/api/agent/*`) still available in backend
+- AI route-planning endpoints (`/api/agent/*`) in backend
 
 ## Current behavior from source
 
@@ -22,12 +23,19 @@ Password policy:
 - Fallback center: Edinburgh (`55.9533, -3.1883`)
 - Day mode searches `cafe`, night mode searches `pub`
 - POI source: Overpass API
+- Overpass failover across multiple mirrors with in-memory cache fallback
 - Search radius: `1500m`
 - Display limit: `5` nearby POIs
 - Route source: OSRM foot routing
 - 2D/3D map toggle (MapLibre)
 - Multi-segment colored route ribbon
-- Chat dock is currently placeholder text (no live AI route generation in UI)
+
+### AI route assistant (active in UI)
+- Chat dock submits prompts to `POST /api/agent/plan`
+- Backend uses OpenAI + Google Places to return candidate places and route stops
+- Frontend auto-selects returned stops and shows remaining suggestions
+- Route line rendering still uses OSRM segments on the frontend
+- Assistant message includes plan summary, selected stops, and optional duration text
 
 ### Collaborative planning (active in UI + backend)
 - Create or join planning room via invite token
@@ -43,12 +51,13 @@ Backend clamps:
 - expected participants: `2..12`
 - join timeout: `30..1800` seconds
 
-### Legacy AI agent planning endpoints (backend)
+### AI agent planning endpoints (backend)
 - `/api/agent/plan`
 - `/api/agent/plan/iterative`
 - `/api/google/route`
 
-These endpoints call OpenAI + Google Maps services, but the current map UI no longer invokes them directly.
+Frontend currently uses `/api/agent/plan`.  
+`/api/agent/plan/iterative` and `/api/google/route` remain available for extended flows.
 
 ## Tech stack
 
@@ -62,7 +71,7 @@ These endpoints call OpenAI + Google Maps services, but the current map UI no lo
 | Manual POIs | Overpass API |
 | Manual routing | OSRM public API |
 | Collaborative engine client | Roundtable SSE/HTTP client |
-| Legacy AI planning | OpenAI Responses API + Google Places/Routes |
+| AI planning | OpenAI Responses API + Google Places/Routes |
 
 ## Configuration
 
@@ -74,9 +83,9 @@ Backend settings load in this order:
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `OPENAI_API_KEY` | Legacy AI planner key | empty |
-| `OPENAI_MODEL` | Legacy AI planner model | `gpt-5-mini` |
-| `GOOGLE_MAPS_API_KEY` | Legacy Google Places/Routes key | empty |
+| `OPENAI_API_KEY` | AI planner key | empty |
+| `OPENAI_MODEL` | AI planner model | `gpt-5-mini` |
+| `GOOGLE_MAPS_API_KEY` | Google Places/Routes key | empty |
 | `ROUNDTABLE_BASE_URL` | Roundtable engine base URL | `http://localhost:8000` |
 
 Frontend optional variable:
@@ -111,7 +120,7 @@ GOOGLE_MAPS_API_KEY=YOUR_GOOGLE_MAPS_API_KEY
 
 Both files are git-ignored.
 
-If you use legacy AI planning endpoints, your Google key must have:
+If you use AI planning endpoints, your Google key must have:
 - `Places API (New)`
 - `Routes API`
 
@@ -175,7 +184,7 @@ uvicorn main:app --reload --port 8000
 - `POST /api/collaborative-planning/chats/{chatId}/veto`
 - `GET /api/collaborative-planning/chats/{chatId}/stream?afterEventId=<id>` (SSE)
 
-### Legacy AI planning
+### AI planning
 - `POST /api/agent/plan`
 - `POST /api/agent/plan/iterative`
 - `POST /api/google/route`
