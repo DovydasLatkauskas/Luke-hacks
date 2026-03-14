@@ -568,7 +568,88 @@ app.MapPost("/api/google/route", async (
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    dbContext.Database.EnsureCreated();
+    await dbContext.Database.EnsureCreatedAsync();
+    await EnsureSqliteCollaborativePlanningSchemaAsync(dbContext);
 }
 
-app.Run();
+await app.RunAsync();
+
+static async Task EnsureSqliteCollaborativePlanningSchemaAsync(
+    AppDbContext dbContext,
+    CancellationToken cancellationToken = default)
+{
+    if (!dbContext.Database.IsSqlite())
+    {
+        return;
+    }
+
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE TABLE IF NOT EXISTS "CollaborativePlanningChats" (
+            "Id" TEXT NOT NULL CONSTRAINT "PK_CollaborativePlanningChats" PRIMARY KEY,
+            "InviteToken" TEXT NOT NULL,
+            "Title" TEXT NULL,
+            "Status" TEXT NOT NULL,
+            "CreatedByUserId" TEXT NOT NULL,
+            "ExpectedParticipantCount" INTEGER NOT NULL,
+            "CreatedAtUtc" TEXT NOT NULL,
+            "JoinDeadlineUtc" TEXT NOT NULL,
+            "StartedAtUtc" TEXT NULL,
+            "CompletedAtUtc" TEXT NULL,
+            "RoundtableSessionId" TEXT NULL,
+            "FinalItineraryJson" TEXT NULL,
+            "FailureReason" TEXT NULL
+        );
+        """,
+        cancellationToken);
+
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_CollaborativePlanningChats_InviteToken"
+        ON "CollaborativePlanningChats" ("InviteToken");
+        """,
+        cancellationToken);
+
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE TABLE IF NOT EXISTS "CollaborativePlanningParticipants" (
+            "Id" TEXT NOT NULL CONSTRAINT "PK_CollaborativePlanningParticipants" PRIMARY KEY,
+            "ChatId" TEXT NOT NULL,
+            "UserId" TEXT NOT NULL,
+            "DisplayName" TEXT NULL,
+            "JoinedAtUtc" TEXT NOT NULL,
+            "ConstraintsSubmittedAtUtc" TEXT NULL,
+            "ConstraintsJson" TEXT NULL,
+            CONSTRAINT "FK_CollaborativePlanningParticipants_CollaborativePlanningChats_ChatId"
+                FOREIGN KEY ("ChatId") REFERENCES "CollaborativePlanningChats" ("Id")
+                ON DELETE CASCADE
+        );
+        """,
+        cancellationToken);
+
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_CollaborativePlanningParticipants_ChatId_UserId"
+        ON "CollaborativePlanningParticipants" ("ChatId", "UserId");
+        """,
+        cancellationToken);
+
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE TABLE IF NOT EXISTS "CollaborativePlanningEvents" (
+            "Id" INTEGER NOT NULL CONSTRAINT "PK_CollaborativePlanningEvents" PRIMARY KEY AUTOINCREMENT,
+            "ChatId" TEXT NOT NULL,
+            "EventType" TEXT NOT NULL,
+            "PayloadJson" TEXT NOT NULL,
+            "CreatedAtUtc" TEXT NOT NULL
+        );
+        """,
+        cancellationToken);
+
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE INDEX IF NOT EXISTS "IX_CollaborativePlanningEvents_ChatId_Id"
+        ON "CollaborativePlanningEvents" ("ChatId", "Id");
+        """,
+        cancellationToken);
+}

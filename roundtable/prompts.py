@@ -88,6 +88,3 @@ Respond ONLY in this exact JSON format, no other text:
   "bar": "<venue_id>",
   "summary": "<2-3 sentences: announce plan, note any tradeoffs made, hype the night>"
 }}"""
-
-
-"""

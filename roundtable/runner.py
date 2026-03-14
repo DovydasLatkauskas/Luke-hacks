@@ -13,9 +13,23 @@ from fetch_venues import (
     get_fallback_venue,
 )
 from prompts import AGENT_SYSTEM, ORCHESTRATOR_PROMPT, PROPOSAL_PROMPT, REACTION_PROMPT, VOTING_PROMPT
-from config import OPENAI_API_KEY, OPENAI_MODEL
+from config import OPENAI_API_KEYS, OPENAI_MODEL
 
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+# Pre-built clients for each key
+_clients = [AsyncOpenAI(api_key=k) for k in OPENAI_API_KEYS]
+
+
+async def _chat_with_fallback(**kwargs) -> object:
+    """Try each API key in order, raising the last error if all fail."""
+    last_err: Exception | None = None
+    for cl in _clients:
+        try:
+            return await cl.chat.completions.create(**kwargs)
+        except Exception as e:
+            last_err = e
+            if "401" not in str(e) and "invalid_api_key" not in str(e):
+                raise
+    raise last_err or RuntimeError("No OpenAI API keys configured")
 
 MAX_ROUNDS = 3
 CONVERGENCE_THRESHOLD = 4.0  # average score out of 5 to stop early
@@ -172,9 +186,8 @@ async def _call_proposal(
         )
 
     try:
-        resp = await client.chat.completions.create(
+        resp = await _chat_with_fallback(
             model=OPENAI_MODEL,
-            temperature=0.7,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
@@ -203,9 +216,8 @@ async def _call_vote(
     )
     score_keys = ", ".join(f'"{n}": <score>' for n in all_names if n != agent.name)
     try:
-        resp = await client.chat.completions.create(
+        resp = await _chat_with_fallback(
             model=OPENAI_MODEL,
-            temperature=0.5,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": VOTING_PROMPT.format(
@@ -237,9 +249,8 @@ async def _call_orchestrator(
     score_totals = compute_score_totals(agents, round_num)
     score_totals_str = "\n".join(f"  {k}: {v:.1f}/5 avg" for k, v in score_totals.items())
 
-    resp = await client.chat.completions.create(
+    resp = await _chat_with_fallback(
         model=OPENAI_MODEL,
-        temperature=0.3,
         messages=[
             {"role": "user", "content": ORCHESTRATOR_PROMPT.format(
                 round=round_num,
@@ -377,15 +388,16 @@ async def run_negotiation(session: NegotiationSession) -> AsyncGenerator[dict, N
 
         # --- Check convergence ---
         converged = check_convergence(agents, session.round)
-        if not converged and session.round < MAX_ROUNDS:
-            yield emit("message", {
-                "agent_id": "orchestrator",
-                "agent_name": "The Orchestrator",
-                "round": session.round,
-                "content": f"Round {session.round} complete — no consensus yet. Moving to round {session.round + 1}.",
-                "type": "summary",
-            })
-            session.round += 1
+        if converged or session.round >= MAX_ROUNDS:
+            break
+        yield emit("message", {
+            "agent_id": "orchestrator",
+            "agent_name": "The Orchestrator",
+            "round": session.round,
+            "content": f"Round {session.round} complete — no consensus yet. Moving to round {session.round + 1}.",
+            "type": "summary",
+        })
+        session.round += 1
 
     # --- Verdict ---
     session.phase = "verdict"
