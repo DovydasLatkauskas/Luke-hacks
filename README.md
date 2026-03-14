@@ -65,21 +65,21 @@ Plan a walking route around real nearby places. The app suggests the 5 closest P
 | Route geometry | OSRM public API (walking profile) |
 | Location tracking | Web Geolocation API |
 | Routing | React Router DOM 6 |
-| Backend | ASP.NET Core 8.0 (C#) + SQLite |
+| Backend | ASP.NET Core 8.0 (C#) + ASP.NET Identity + EF Core + SQLite |
 
 ---
 
 ## Backend
 
-The backend is intended to support persistent collaborative route planning rather than remain a stateless proxy.
+The backend now has a real persistence and authentication foundation. User accounts are backed by SQLite through ASP.NET Core Identity and Entity Framework Core, so the app can move from a frontend-only prototype to a stateful collaborative product.
 
-### Core requirements
-- User accounts are required so chats and routes can be owned, shared, and permissioned.
-- The application data store is SQLite.
-- We need a `Chat` object that can be shared with multiple users, so more than one person can access the same conversation.
-- Routes must be stored persistently, and each chat maps to exactly one route in a 1:1 relationship.
+### Implemented now
+- User registration and login are available through ASP.NET Core Identity.
+- User records are stored in a local SQLite database.
+- The backend can resolve the authenticated user for protected API calls.
+- The SQLite database is created automatically on startup for local development.
 
-### Suggested data model
+### Next backend objects
 - `User`: account identity and profile metadata.
 - `Chat`: the shared conversation container.
 - `ChatUser`: join table for chat membership and roles.
@@ -91,7 +91,12 @@ The backend is intended to support persistent collaborative route planning rathe
 - A chat has exactly one route.
 - A route belongs to exactly one chat.
 
-### Backend request flow
+### Auth endpoints
+- `POST /api/auth/register`: create a new account.
+- `POST /api/auth/login`: sign in with an existing account.
+- `GET /api/auth/me`: return the currently authenticated user.
+
+### Target backend request flow
 1. A signed-in user submits a route-planning prompt from the frontend, for example a request for a running route that passes a set number of cafes.
 2. The frontend sends that prompt, along with the active chat context and any relevant location data, to the ASP.NET Core backend.
 3. The backend resolves the user, loads or creates the chat, and generates the route for that chat.
@@ -141,9 +146,15 @@ MapLayout (lifted state)
 ---
 
 ## Project structure
-```
+```  
 luke-hacks/
-├── Program.cs                        # ASP.NET Core entry point (stub)
+├── Program.cs                        # ASP.NET Core entry point, auth and API wiring
+├── Data/
+│   └── AppDbContext.cs               # EF Core + Identity SQLite context
+├── Models/
+│   ├── ApplicationUser.cs            # Identity user model
+│   └── CurrentUserResponse.cs        # Authenticated user response DTO
+├── luke-hacks.http                   # Sample auth requests
 ├── frontend/
 │   ├── index.html
 │   ├── package.json
@@ -176,7 +187,7 @@ luke-hacks/
 
 ### Prerequisites
 - Node.js 18+
-- .NET 8.0 SDK (for backend stub)
+- .NET 8.0 SDK
 
 ### Installation
 ```bash
@@ -187,11 +198,20 @@ npm install
 
 ### Run locally
 ```bash
+cd ..
+dotnet run
+```
+
+In another terminal:
+
+```bash
 cd frontend
 npm run dev
 ```
 
 Open `http://localhost:5173` in your browser. Allow location access when prompted — or it will fall back to Edinburgh.
+
+On first backend startup, SQLite files are created locally for the Identity store.
 
 > GPS tracking requires HTTPS in production. Chrome allows `localhost` to use the Geolocation API without SSL.
 
