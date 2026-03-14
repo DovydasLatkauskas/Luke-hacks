@@ -7,6 +7,17 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // MapLibre GL (and some deps) expect __publicField at runtime when bundled by Vite
+      (function () {
+        if (typeof globalThis.__publicField === 'undefined') {
+          globalThis.__publicField = function (obj, key, value) {
+            Object.defineProperty(obj, key, { enumerable: true, configurable: true, writable: true, value: value });
+            return value;
+          };
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

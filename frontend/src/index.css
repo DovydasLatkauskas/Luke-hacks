@@ -7,3 +7,17 @@ body {
   height: 100%;
 }
 
+body {
+  margin: 0;
+}
+
+#root {
+  height: 100%;
+}
+
+@supports (backdrop-filter: blur(1px)) {
+  .glass {
+    backdrop-filter: blur(14px) saturate(140%);
+  }
+}
+
