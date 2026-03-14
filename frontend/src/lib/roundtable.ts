@@ -94,11 +94,7 @@ export async function submitVeto(chatId: string, reason: string): Promise<void> 
     headers: authHeaders(),
     body: JSON.stringify({ reason }),
   })
-
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(text || 'Failed to submit veto.')
-  }
+  await parseJsonResponse<{ ok: boolean }>(res)
 }
 
 export async function streamSession(

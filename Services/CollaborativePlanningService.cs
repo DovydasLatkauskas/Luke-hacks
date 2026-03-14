@@ -224,7 +224,14 @@ public sealed class CollaborativePlanningService
                 .LongCountAsync(evt => evt.ChatId == chat.Id, cancellationToken);
         }
 
-        await _roundtableEngineClient.SubmitVetoAsync(roundtableSessionId, userId, reason.Trim(), cancellationToken);
+        try
+        {
+            await _roundtableEngineClient.SubmitVetoAsync(roundtableSessionId, userId, reason.Trim(), cancellationToken);
+        }
+        catch (RoundtableEngineException ex) when (ex.StatusCode == 409)
+        {
+            throw new InvalidOperationException(ex.Message);
+        }
 
         using (var scope = _scopeFactory.CreateScope())
         {

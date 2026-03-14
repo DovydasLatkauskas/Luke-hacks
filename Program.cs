@@ -190,6 +190,10 @@ collaborativePlanningGroup.MapPost("/chats/{chatId:guid}/constraints", async (
     {
         return Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
     }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
+    }
     catch (Exception ex)
     {
         return Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
@@ -223,6 +227,10 @@ collaborativePlanningGroup.MapGet("/chats/{chatId:guid}", async (
     catch (UnauthorizedAccessException ex)
     {
         return Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
     }
     catch (Exception ex)
     {
@@ -258,6 +266,10 @@ collaborativePlanningGroup.MapPost("/chats/{chatId:guid}/veto", async (
     catch (UnauthorizedAccessException ex)
     {
         return Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
     }
     catch (Exception ex)
     {
