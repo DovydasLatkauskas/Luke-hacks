@@ -156,10 +156,7 @@ export function MapView({
     if (!containerRef.current) return
     if (mapRef.current) {
       mapRef.current.resize()
-      return () => {
-        mapRef.current?.remove()
-        mapRef.current = null
-      }
+      return
     }
 
     const map = new maplibregl.Map({
@@ -168,7 +165,7 @@ export function MapView({
         version: 8,
         glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
         sources: {
-          basemap: {
+          'basemap-light': {
             type: 'raster',
             tiles: [
               'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
@@ -179,13 +176,39 @@ export function MapView({
             maxzoom: 20,
             attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
           },
+          'basemap-dark': {
+            type: 'raster',
+            tiles: [
+              // Carto dark theme for a proper night‑mode look
+              'https://a.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png',
+              'https://b.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png',
+              'https://c.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png',
+            ],
+            tileSize: 256,
+            maxzoom: 20,
+            attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+          },
         },
         layers: [
           {
-            id: 'basemap-layer',
+            id: 'basemap-light-layer',
             type: 'raster',
-            source: 'basemap',
+            source: 'basemap-light',
             paint: {},
+            layout: { visibility: mode === 'day' ? 'visible' : 'none' },
+          },
+          {
+            id: 'basemap-dark-layer',
+            type: 'raster',
+            source: 'basemap-dark',
+            paint: {
+              // Use dark_all mostly as-is; just lift
+              // brightness slightly so features are visible.
+              'raster-brightness-min': 0.0,
+              'raster-brightness-max': 0.9,
+              'raster-contrast': 0.1,
+            },
+            layout: { visibility: mode === 'day' ? 'none' : 'visible' },
           },
         ],
       },
@@ -338,9 +361,11 @@ export function MapView({
           'text-allow-overlap': false,
         },
         paint: {
-          'text-color': '#1e293b',
-          'text-halo-color': '#ffffff',
-          'text-halo-width': 2,
+          // White labels so they remain legible on both
+          // light and dark basemaps.
+          'text-color': '#ffffff',
+          'text-halo-color': '#020617',
+          'text-halo-width': 1.5,
           'text-opacity': ['case', ['==', ['get', 'selected'], 1], 1, 0.65],
         },
       })
@@ -398,6 +423,30 @@ export function MapView({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // ---------- toggle light/dark basemap when mode changes ----------
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    try {
+      if (map.getLayer('basemap-light-layer')) {
+        map.setLayoutProperty(
+          'basemap-light-layer',
+          'visibility',
+          mode === 'day' ? 'visible' : 'none',
+        )
+      }
+      if (map.getLayer('basemap-dark-layer')) {
+        map.setLayoutProperty(
+          'basemap-dark-layer',
+          'visibility',
+          mode === 'day' ? 'none' : 'visible',
+        )
+      }
+    } catch {
+      // ignore style errors
+    }
+  }, [mode])
 
   // ---------- auto-focus a hover card when suggestions change ----------
   useEffect(() => {
