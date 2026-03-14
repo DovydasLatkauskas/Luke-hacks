@@ -636,7 +636,7 @@ static double HaversineMeters(double lat1, double lng1, double lat2, double lng2
     const double r = 6_371_000;
     var toRad = (double d) => d * Math.PI / 180d;
     var dLat = toRad(lat2 - lat1);
-    var dLng = toRad(lat2 - lat1);
+    var dLng = toRad(lng2 - lng1);
     var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
             Math.Cos(toRad(lat1)) * Math.Cos(toRad(lat2)) *
             Math.Sin(dLng / 2) * Math.Sin(dLng / 2);
