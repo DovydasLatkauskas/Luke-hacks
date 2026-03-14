@@ -33,6 +33,9 @@ Password policy:
 ### AI route assistant (active in UI)
 - Chat dock submits prompts to `POST /api/agent/plan`
 - Backend uses OpenAI + Google Places to return candidate places and route stops
+- If the prompt specifies a target distance, the planner biases stop count and search radius toward meeting it
+- If the prompt names a specific place or landmark, the planner treats it as a required destination and keeps it in the route
+- Distance-based prompts without a named destination are routed as loops back toward the starting area
 - Frontend auto-selects returned stops and shows remaining suggestions
 - Route line rendering still uses OSRM segments on the frontend
 - Assistant message includes plan summary, selected stops, and optional duration text

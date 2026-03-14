@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using luke_hacks.Configuration;
 using luke_hacks.Models;
 using Microsoft.Extensions.Options;
@@ -156,7 +157,7 @@ public sealed class OpenAiPlanningService
             throw new InvalidOperationException("OpenAI returned an unreadable local plan.");
         }
 
-        return NormalizeIntent(intent);
+        return NormalizeIntent(prompt, intent);
     }
 
     private static string? ExtractOutputText(string body)
@@ -192,7 +193,7 @@ public sealed class OpenAiPlanningService
         return null;
     }
 
-    private static DiscoveryIntent NormalizeIntent(DiscoveryIntent intent)
+    private static DiscoveryIntent NormalizeIntent(string prompt, DiscoveryIntent intent)
     {
         var summary = string.IsNullOrWhiteSpace(intent.IntentSummary)
             ? "Nearby local discovery"
@@ -208,20 +209,76 @@ public sealed class OpenAiPlanningService
             ? null
             : intent.FinalDestinationQuery.Trim();
 
-        int? targetDist = intent.TargetDistanceMeters is > 0
-            ? Math.Clamp(intent.TargetDistanceMeters.Value, 500, 30000)
-            : null;
+        var explicitPromptDistance = ExtractDistanceMeters(prompt);
+        int? targetDist = explicitPromptDistance
+            ?? (intent.TargetDistanceMeters is > 0
+                ? Math.Clamp(intent.TargetDistanceMeters.Value, 500, 30000)
+                : null);
+
+        var routeStopCount = Math.Clamp(intent.RouteStopCount, 1, 5);
+        if (targetDist is not null)
+        {
+            routeStopCount = targetDist.Value switch
+            {
+                <= 3000 => Math.Max(routeStopCount, 2),
+                <= 7000 => Math.Max(routeStopCount, 3),
+                <= 12000 => Math.Max(routeStopCount, 4),
+                _ => 5,
+            };
+        }
+
+        if (finalDest is not null)
+        {
+            routeStopCount = Math.Max(routeStopCount, 1);
+        }
+
+        var radiusMeters = Math.Clamp(intent.RadiusMeters, 500, 20000);
+        if (targetDist is not null)
+        {
+            const double walkingFactor = 1.3d;
+            var desiredPerLegRadius = targetDist.Value / (double)(routeStopCount + 1) / walkingFactor;
+            radiusMeters = (int)Math.Clamp(Math.Round(desiredPerLegRadius), 400, 20000);
+        }
 
         return intent with
         {
             IntentSummary = summary,
             GoogleMapsQuery = query,
-            RadiusMeters = Math.Clamp(intent.RadiusMeters, 500, 20000),
+            RadiusMeters = radiusMeters,
             MaxResultCount = Math.Clamp(intent.MaxResultCount, 3, 8),
-            RouteStopCount = Math.Clamp(intent.RouteStopCount, 1, 5),
+            RouteStopCount = routeStopCount,
             UserFacingPlan = plan,
             FinalDestinationQuery = finalDest,
             TargetDistanceMeters = targetDist,
         };
+    }
+
+    private static int? ExtractDistanceMeters(string prompt)
+    {
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(
+            prompt,
+            @"(?<value>\d+(?:\.\d+)?)\s*(?<unit>km|kms|kilometers?|miles?|mi|k)\b",
+            RegexOptions.IgnoreCase);
+
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var value = double.Parse(match.Groups["value"].Value, System.Globalization.CultureInfo.InvariantCulture);
+        var unit = match.Groups["unit"].Value.ToLowerInvariant();
+        var meters = unit switch
+        {
+            "k" or "km" or "kms" or "kilometer" or "kilometers" => value * 1000d,
+            "mi" or "mile" or "miles" => value * 1609.34d,
+            _ => value,
+        };
+
+        return Math.Clamp((int)Math.Round(meters), 500, 30000);
     }
 }
