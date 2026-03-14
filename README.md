@@ -24,15 +24,23 @@ Password rules from backend config:
 - Fallback location if geolocation is unavailable: `55.9533, -3.1883` (Edinburgh)
 - Day mode pulls nearby `cafe` POIs from Overpass
 - Night mode pulls nearby `pub` POIs from Overpass
+- Manual POI query radius: `1500m`
+- Manual POI display limit: `5`
 - Manual routing uses OSRM foot routing in the browser
 - Route updates when stops are added/removed
 
 ### AI planner
 - Prompt sent to `POST /api/agent/plan`
+- Optional iterative flow available at `POST /api/agent/plan/iterative`
 - Backend asks OpenAI Responses API for a structured local intent
 - Backend searches Google Places Text Search and filters by distance
 - Backend computes a walking route using Google Routes API
 - Frontend shows returned places, route summary, and Google Maps deep links
+
+AI intent constraints enforced in backend:
+- `radiusMeters`: `500` to `20000`
+- `maxResultCount`: `3` to `8`
+- `routeStopCount`: `1` to `5`
 
 ### Dashboard
 - `/dashboard` exists and is authenticated
@@ -72,6 +80,10 @@ Frontend optional variable:
 Google key requirements:
 - Enable `Places API (New)`
 - Enable `Routes API`
+
+Database defaults:
+- Development profile (`ASPNETCORE_ENVIRONMENT=Development`) uses `luke-hacks.dev.db`
+- Non-development fallback is `luke-hacks.db`
 
 ## Local development
 
@@ -121,6 +133,7 @@ Vite dev server:
 | `/api/auth/login` | `POST` | Return bearer tokens |
 | `/api/auth/me` | `GET` | Return current user (auth required) |
 | `/api/agent/plan` | `POST` | Prompt + location -> planned places + optional route |
+| `/api/agent/plan/iterative` | `POST` | Step-by-step route planning session |
 | `/api/google/route` | `POST` | Compute route from origin + waypoints |
 
 ## Notes
@@ -129,6 +142,7 @@ Vite dev server:
 - AI mode requires both `OPENAI_API_KEY` and `GOOGLE_MAPS_API_KEY`.
 - CORS currently allows local frontend origins on port `5173`.
 - Dockerfile builds and runs the backend service only.
+- In non-development environments, backend enables HTTPS redirection.
 
 ## Project structure
 
