@@ -5,6 +5,11 @@
 
 # dotenv files
 .env
+*.tsbuildinfo
+*.db
+*.db-shm
+*.db-wal
+.keys/
 
 # User-specific files
 *.rsuser

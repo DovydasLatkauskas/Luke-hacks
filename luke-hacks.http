@@ -1,3 +1,25 @@
 @luke_hacks_HostAddress = http://localhost:5149
 
+### Register
+POST {{luke_hacks_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "demo@example.com",
+  "password": "password123"
+}
+
+### Login
+POST {{luke_hacks_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "demo@example.com",
+  "password": "password123"
+}
+
+### Current user
+GET {{luke_hacks_HostAddress}}/api/auth/me
+Authorization: Bearer {{accessToken}}
+
 ###
