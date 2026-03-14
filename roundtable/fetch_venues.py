@@ -38,9 +38,28 @@ SLOT_QUERIES = [
 ]
 
 
+def _parse_location_string(location: str | None) -> tuple[float, float] | None:
+    """Parse 'near 55.94521, -3.18832' strings sent by the .NET layer."""
+    if not location:
+        return None
+    try:
+        parts = location.lower().replace("near", "").split(",")
+        if len(parts) == 2:
+            return float(parts[0].strip()), float(parts[1].strip())
+    except ValueError:
+        pass
+    return None
+
+
 def compute_centroid(agents: list[AgentState]) -> tuple[float, float]:
-    coords = [(a.constraints.lat, a.constraints.lng) for a in agents
-              if a.constraints.lat is not None and a.constraints.lng is not None]
+    coords: list[tuple[float, float]] = []
+    for a in agents:
+        if a.constraints.lat is not None and a.constraints.lng is not None:
+            coords.append((a.constraints.lat, a.constraints.lng))
+        else:
+            parsed = _parse_location_string(a.constraints.location)
+            if parsed:
+                coords.append(parsed)
     if not coords:
         return EDINBURGH_LAT, EDINBURGH_LNG
     return (

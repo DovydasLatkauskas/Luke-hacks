@@ -13,11 +13,11 @@ public sealed class CollaborativePlanningService
     {
         PropertyNameCaseInsensitive = true,
     };
+    private static readonly SemaphoreSlim StartLock = new(1, 1);
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly RoundtableEngineClient _roundtableEngineClient;
     private readonly ILogger<CollaborativePlanningService> _logger;
-    private readonly SemaphoreSlim _startLock = new(1, 1);
 
     public CollaborativePlanningService(
         IServiceScopeFactory scopeFactory,
@@ -89,12 +89,22 @@ public sealed class CollaborativePlanningService
         var existing = chat.Participants.FirstOrDefault(participant => participant.UserId == userId);
         if (existing is null)
         {
-            chat.Participants.Add(new CollaborativePlanningParticipant
-            {
-                UserId = userId,
-                DisplayName = userEmail,
-            });
-            await dbContext.SaveChangesAsync(cancellationToken);
+            var participantId = Guid.NewGuid();
+            var joinedAtUtc = DateTime.UtcNow;
+
+            await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                INSERT INTO "CollaborativePlanningParticipants"
+                    ("Id", "ChatId", "UserId", "DisplayName", "JoinedAtUtc", "ConstraintsSubmittedAtUtc", "ConstraintsJson")
+                SELECT
+                    {participantId}, {chat.Id}, {userId}, {userEmail}, {joinedAtUtc}, NULL, NULL
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM "CollaborativePlanningParticipants"
+                    WHERE "ChatId" = {chat.Id} AND "UserId" = {userId}
+                );
+                """,
+                cancellationToken);
         }
 
         return await ToResponseAsync(dbContext, chat.Id, userId, cancellationToken)
@@ -132,10 +142,19 @@ public sealed class CollaborativePlanningService
             }
 
             var normalized = NormalizeConstraints(request);
-            participant.DisplayName = normalized.Name;
-            participant.ConstraintsJson = JsonSerializer.Serialize(normalized, JsonOptions);
-            participant.ConstraintsSubmittedAtUtc = DateTime.UtcNow;
-            await dbContext.SaveChangesAsync(cancellationToken);
+            var now = DateTime.UtcNow;
+            var constraintsJson = JsonSerializer.Serialize(normalized, JsonOptions);
+            var updatedRows = await dbContext.CollaborativePlanningParticipants
+                .Where(current => current.ChatId == chatId && current.UserId == userId)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(current => current.DisplayName, normalized.Name)
+                    .SetProperty(current => current.ConstraintsJson, constraintsJson)
+                    .SetProperty(current => current.ConstraintsSubmittedAtUtc, now), cancellationToken);
+
+            if (updatedRows == 0)
+            {
+                throw new InvalidOperationException("Could not persist submitted constraints. Please retry.");
+            }
         }
 
         await TryStartChatAsync(chatId, cancellationToken);
@@ -205,7 +224,14 @@ public sealed class CollaborativePlanningService
                 .LongCountAsync(evt => evt.ChatId == chat.Id, cancellationToken);
         }
 
-        await _roundtableEngineClient.SubmitVetoAsync(roundtableSessionId, userId, reason.Trim(), cancellationToken);
+        try
+        {
+            await _roundtableEngineClient.SubmitVetoAsync(roundtableSessionId, userId, reason.Trim(), cancellationToken);
+        }
+        catch (RoundtableEngineException ex) when (ex.StatusCode == 409)
+        {
+            throw new InvalidOperationException(ex.Message);
+        }
 
         using (var scope = _scopeFactory.CreateScope())
         {
@@ -221,6 +247,47 @@ public sealed class CollaborativePlanningService
         }
 
         StartEventIngestion(chatId, roundtableSessionId, skipCount);
+    }
+
+    public async Task SubmitFeedbackAsync(
+        Guid chatId,
+        string userId,
+        string text,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new InvalidOperationException("Feedback text is required.");
+        }
+
+        string roundtableSessionId;
+
+        using (var scope = _scopeFactory.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var chat = await dbContext.CollaborativePlanningChats
+                .Include(current => current.Participants)
+                .FirstOrDefaultAsync(current => current.Id == chatId, cancellationToken);
+
+            if (chat is null)
+            {
+                throw new KeyNotFoundException("Collaborative room was not found.");
+            }
+
+            if (!chat.Participants.Any(participant => participant.UserId == userId))
+            {
+                throw new UnauthorizedAccessException("You are not a member of this room.");
+            }
+
+            if (string.IsNullOrWhiteSpace(chat.RoundtableSessionId))
+            {
+                throw new InvalidOperationException("Negotiation session is not active.");
+            }
+
+            roundtableSessionId = chat.RoundtableSessionId;
+        }
+
+        await _roundtableEngineClient.SubmitFeedbackAsync(roundtableSessionId, userId, text.Trim(), cancellationToken);
     }
 
     public async Task StartEligibleChatsAsync(CancellationToken cancellationToken)
@@ -243,7 +310,7 @@ public sealed class CollaborativePlanningService
 
     private async Task TryStartChatAsync(Guid chatId, CancellationToken cancellationToken)
     {
-        await _startLock.WaitAsync(cancellationToken);
+        await StartLock.WaitAsync(cancellationToken);
         try
         {
             using var scope = _scopeFactory.CreateScope();
@@ -351,9 +418,13 @@ public sealed class CollaborativePlanningService
                 await dbContext.SaveChangesAsync(cancellationToken);
             }
         }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            _logger.LogWarning(ex, "Start-chat concurrency conflict for chat {ChatId}. A concurrent request likely already advanced room state.", chatId);
+        }
         finally
         {
-            _startLock.Release();
+            StartLock.Release();
         }
     }
 
@@ -508,6 +579,7 @@ public sealed class CollaborativePlanningService
     }
 
     private static string BuildInvitePath(string inviteToken) => $"/roundtable?invite={inviteToken}";
+
 
     private static async Task<CollaborativePlanningChatResponse?> ToResponseAsync(
         AppDbContext dbContext,

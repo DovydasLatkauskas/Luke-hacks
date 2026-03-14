@@ -82,7 +82,49 @@ public sealed class RoundtableEngineClient
                 reason,
             },
             cancellationToken);
-        response.EnsureSuccessStatusCode();
+
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        var message = ExtractErrorMessage(body);
+        throw new RoundtableEngineException(
+            (int)response.StatusCode,
+            string.IsNullOrWhiteSpace(message)
+                ? $"Roundtable veto request failed with status code {(int)response.StatusCode}."
+                : message);
+    }
+
+    public async Task SubmitFeedbackAsync(
+        string sessionId,
+        string userId,
+        string text,
+        CancellationToken cancellationToken)
+    {
+        var url = BuildAbsoluteUrl($"/roundtable/session/{sessionId}/feedback");
+        var response = await _httpClient.PostAsJsonAsync(
+            url,
+            new
+            {
+                user_id = userId,
+                text,
+            },
+            cancellationToken);
+
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        var message = ExtractErrorMessage(body);
+        throw new RoundtableEngineException(
+            (int)response.StatusCode,
+            string.IsNullOrWhiteSpace(message)
+                ? $"Roundtable feedback request failed with status code {(int)response.StatusCode}."
+                : message);
     }
 
     public async IAsyncEnumerable<RoundtableSseEvent> StreamSessionAsync(
@@ -151,8 +193,51 @@ public sealed class RoundtableEngineClient
         return $"{baseUrl}{cleanPath}";
     }
 
+    private static string? ExtractErrorMessage(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.String)
+                {
+                    return detail.GetString();
+                }
+
+                if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
+                {
+                    return error.GetString();
+                }
+            }
+        }
+        catch
+        {
+            // fall through and return raw body
+        }
+
+        return body.Trim();
+    }
+
     private sealed record CreateSessionResponse(
         [property: JsonPropertyName("session_id")] string SessionId);
+}
+
+public sealed class RoundtableEngineException : Exception
+{
+    public int StatusCode { get; }
+
+    public RoundtableEngineException(int statusCode, string message)
+        : base(message)
+    {
+        StatusCode = statusCode;
+    }
 }
 
 public sealed record RoundtableSseEvent(

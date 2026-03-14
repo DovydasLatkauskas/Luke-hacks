@@ -27,7 +27,7 @@ export type ItineraryResult = {
 }
 
 export type PhaseEvent = {
-  phase: 'research' | 'proposals' | 'voting' | 'verdict'
+  phase: 'research' | 'proposals' | 'voting' | 'feedback' | 'verdict'
   round: number
 }
 

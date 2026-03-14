@@ -64,7 +64,8 @@ public sealed record PlaceSuggestion(
 
 public sealed record GoogleRouteRequest(
     Coordinate Origin,
-    IReadOnlyList<GoogleRouteWaypoint> Waypoints);
+    IReadOnlyList<GoogleRouteWaypoint> Waypoints,
+    bool ReturnToOrigin = false);
 
 public sealed record GoogleRouteWaypoint(
     string Id,

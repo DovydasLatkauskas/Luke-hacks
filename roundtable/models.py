@@ -45,6 +45,11 @@ class VetoRequest(BaseModel):
     reason: str
 
 
+class FeedbackRequest(BaseModel):
+    user_id: str
+    text: str
+
+
 class VenueSlot(BaseModel):
     slot: Literal["pre_drinks", "dinner", "bar"]
     venue_id: str
@@ -91,6 +96,7 @@ class NegotiationSession(BaseModel):
     result: ItineraryResult | None = None
     veto_count: int = 0
     veto_reasons: list[str] = []
+    feedback: list[dict] = []         # user feedback entries {user_id, text, round}
     message_history: list[dict] = []
     started: bool = False
     created_at: float = 0.0

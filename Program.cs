@@ -190,6 +190,10 @@ collaborativePlanningGroup.MapPost("/chats/{chatId:guid}/constraints", async (
     {
         return Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
     }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
+    }
     catch (Exception ex)
     {
         return Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
@@ -223,6 +227,10 @@ collaborativePlanningGroup.MapGet("/chats/{chatId:guid}", async (
     catch (UnauthorizedAccessException ex)
     {
         return Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
     }
     catch (Exception ex)
     {
@@ -259,12 +267,55 @@ collaborativePlanningGroup.MapPost("/chats/{chatId:guid}/veto", async (
     {
         return Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
     }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
+    }
     catch (Exception ex)
     {
         return Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
     }
 })
 .WithName("SubmitCollaborativePlanningVeto")
+.WithOpenApi();
+
+collaborativePlanningGroup.MapPost("/chats/{chatId:guid}/feedback", async (
+    Guid chatId,
+    SubmitCollaborativePlanningFeedbackRequest request,
+    ClaimsPrincipal user,
+    UserManager<ApplicationUser> userManager,
+    CollaborativePlanningService collaborativePlanning,
+    CancellationToken cancellationToken) =>
+{
+    var currentUser = await userManager.GetUserAsync(user);
+    if (currentUser is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        await collaborativePlanning.SubmitFeedbackAsync(chatId, currentUser.Id, request.Text, cancellationToken);
+        return Results.Ok(new { ok = true });
+    }
+    catch (KeyNotFoundException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+    catch (UnauthorizedAccessException ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
+    }
+})
+.WithName("SubmitCollaborativePlanningFeedback")
 .WithOpenApi();
 
 collaborativePlanningGroup.MapGet("/chats/{chatId:guid}/stream", async (
@@ -374,9 +425,43 @@ app.MapPost("/api/agent/plan", async (
     try
     {
         var intent = await planner.CreateIntentAsync(request.Prompt, request.CurrentLocation, cancellationToken);
-        var places = await googleMaps.SearchPlacesAsync(intent, request.CurrentLocation, cancellationToken);
-        var routeStops = places.Take(Math.Min(intent.RouteStopCount, places.Count)).ToList();
-        var route = await googleMaps.ComputeRouteAsync(request.CurrentLocation, routeStops, cancellationToken);
+        var places = (await googleMaps.SearchPlacesAsync(intent, request.CurrentLocation, cancellationToken)).ToList();
+        var nonDestinationStopCount = string.IsNullOrWhiteSpace(intent.FinalDestinationQuery)
+            ? intent.RouteStopCount
+            : Math.Max(0, intent.RouteStopCount - 1);
+        var routeStops = places.Take(Math.Min(nonDestinationStopCount, places.Count)).ToList();
+
+        if (!string.IsNullOrWhiteSpace(intent.FinalDestinationQuery))
+        {
+            var destinationIntent = new DiscoveryIntent(
+                intent.IntentSummary,
+                intent.FinalDestinationQuery,
+                Math.Max(intent.RadiusMeters, 5000),
+                5,
+                1,
+                intent.OpenNow,
+                intent.UserFacingPlan,
+                intent.FinalDestinationQuery,
+                intent.TargetDistanceMeters);
+
+            var destination = (await googleMaps.SearchPlacesAsync(destinationIntent, request.CurrentLocation, cancellationToken))
+                .FirstOrDefault(place => routeStops.All(stop => stop.Id != place.Id));
+
+            if (destination is not null)
+            {
+                routeStops.Add(destination);
+                if (places.All(place => place.Id != destination.Id))
+                {
+                    places.Add(destination);
+                }
+            }
+        }
+
+        var route = await googleMaps.ComputeRouteAsync(
+            request.CurrentLocation,
+            routeStops,
+            string.IsNullOrWhiteSpace(intent.FinalDestinationQuery),
+            cancellationToken);
 
         return Results.Ok(new AgentPlanResponse(
             request.Prompt,
@@ -478,7 +563,11 @@ app.MapPost("/api/agent/plan/iterative", async (
                     null))
                 .ToList();
 
-            route = await googleMaps.ComputeRouteAsync(request.CurrentLocation, routeStops, cancellationToken);
+            route = await googleMaps.ComputeRouteAsync(
+                request.CurrentLocation,
+                routeStops,
+                string.IsNullOrWhiteSpace(session.FinalDestinationQuery),
+                cancellationToken);
         }
         else
         {
@@ -516,7 +605,9 @@ app.MapPost("/api/agent/plan/iterative", async (
                 8,
                 session.RouteStopCount,
                 session.OpenNow,
-                session.PlanSummary);
+                session.PlanSummary,
+                isLastRound ? session.FinalDestinationQuery : null,
+                session.TargetDistanceMeters);
 
             var selectedIds = selectedStops
                 .Select(stop => stop.Id)
@@ -595,7 +686,11 @@ app.MapPost("/api/google/route", async (
                 null))
             .ToList();
 
-        var route = await googleMaps.ComputeRouteAsync(request.Origin, stops, cancellationToken);
+        var route = await googleMaps.ComputeRouteAsync(
+            request.Origin,
+            stops,
+            request.ReturnToOrigin,
+            cancellationToken);
         return Results.Ok(route);
     }
     catch (InvalidOperationException ex)

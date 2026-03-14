@@ -13,9 +13,23 @@ from fetch_venues import (
     get_fallback_venue,
 )
 from prompts import AGENT_SYSTEM, ORCHESTRATOR_PROMPT, PROPOSAL_PROMPT, REACTION_PROMPT, VOTING_PROMPT
-from config import OPENAI_API_KEY, OPENAI_MODEL
+from config import OPENAI_API_KEYS, OPENAI_MODEL
 
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+# Pre-built clients for each key
+_clients = [AsyncOpenAI(api_key=k) for k in OPENAI_API_KEYS]
+
+
+async def _chat_with_fallback(**kwargs) -> object:
+    """Try each API key in order, raising the last error if all fail."""
+    last_err: Exception | None = None
+    for cl in _clients:
+        try:
+            return await cl.chat.completions.create(**kwargs)
+        except Exception as e:
+            last_err = e
+            if "401" not in str(e) and "invalid_api_key" not in str(e):
+                raise
+    raise last_err or RuntimeError("No OpenAI API keys configured")
 
 MAX_ROUNDS = 3
 CONVERGENCE_THRESHOLD = 4.0  # average score out of 5 to stop early
@@ -71,6 +85,7 @@ def build_conversation_history(
     agents: list[AgentState],
     up_to_round: int,
     veto_reasons: list[str] | None = None,
+    feedback: list[dict] | None = None,
 ) -> str:
     """Builds a readable transcript of all rounds so far for agents to react to."""
     parts = []
@@ -81,6 +96,20 @@ def build_conversation_history(
             parts.append(f"=== Round {r} Proposals ===\n{proposals}")
         if votes:
             parts.append(f"=== Round {r} Votes & Objections ===\n{votes}")
+        # Include user feedback for this round
+        if feedback:
+            round_fb = [f for f in feedback if f.get("round") == r]
+            if round_fb:
+                fb_lines = []
+                for f in round_fb:
+                    name = f.get("user_id", "User")
+                    # Try to resolve name from agents
+                    for a in agents:
+                        if a.user_id == f.get("user_id"):
+                            name = a.name
+                            break
+                    fb_lines.append(f"- {name}: \"{f['text']}\"")
+                parts.append(f"=== Round {r} User Feedback ===\n" + "\n".join(fb_lines))
     if veto_reasons:
         reasons_str = "\n".join(f"- {r}" for r in veto_reasons)
         parts.append(f"=== Group Vetoed the Previous Result ===\n{reasons_str}\nYou must propose a new itinerary that addresses these concerns.")
@@ -107,6 +136,26 @@ def check_convergence(agents: list[AgentState], round_num: int) -> bool:
     if not averages:
         return False
     return max(averages.values()) >= CONVERGENCE_THRESHOLD
+
+
+def build_constraints_summary(agents: list[AgentState], exclude_name: str) -> str:
+    """Build an anonymized summary of other agents' constraints."""
+    lines = []
+    for i, a in enumerate(agents):
+        if a.name == exclude_name:
+            continue
+        c = a.constraints
+        parts = []
+        if c.budget:
+            parts.append(f"budget: {c.budget}")
+        if c.dietary:
+            parts.append(f"dietary: {c.dietary}")
+        if c.mood:
+            parts.append(f"mood: {c.mood}")
+        if c.time:
+            parts.append(f"time: {c.time}")
+        lines.append(f"- Person {i + 1}: {', '.join(parts)}")
+    return "\n".join(lines) if lines else "No other preferences known."
 
 
 def validate_proposal(data: dict, round_num: int, venue_pool: list[Venue]) -> ItineraryResult:
@@ -148,6 +197,7 @@ async def _call_proposal(
     venue_list: str,
     venue_pool: list[Venue],
     conversation_history: str,
+    constraints_summary: str = "",
 ) -> tuple[AgentState, ItineraryResult | None, str | None]:
     system = AGENT_SYSTEM.format(
         name=agent.name,
@@ -162,7 +212,7 @@ async def _call_proposal(
         user_content = PROPOSAL_PROMPT.format(
             round=round_num,
             venue_list=venue_list,
-            constraints_summary="Other group members have varying budgets, dietary needs, and preferences.",
+            constraints_summary=constraints_summary,
         )
     else:
         user_content = REACTION_PROMPT.format(
@@ -172,9 +222,8 @@ async def _call_proposal(
         )
 
     try:
-        resp = await client.chat.completions.create(
+        resp = await _chat_with_fallback(
             model=OPENAI_MODEL,
-            temperature=0.7,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
@@ -203,9 +252,8 @@ async def _call_vote(
     )
     score_keys = ", ".join(f'"{n}": <score>' for n in all_names if n != agent.name)
     try:
-        resp = await client.chat.completions.create(
+        resp = await _chat_with_fallback(
             model=OPENAI_MODEL,
-            temperature=0.5,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": VOTING_PROMPT.format(
@@ -237,9 +285,8 @@ async def _call_orchestrator(
     score_totals = compute_score_totals(agents, round_num)
     score_totals_str = "\n".join(f"  {k}: {v:.1f}/5 avg" for k, v in score_totals.items())
 
-    resp = await client.chat.completions.create(
+    resp = await _chat_with_fallback(
         model=OPENAI_MODEL,
-        temperature=0.3,
         messages=[
             {"role": "user", "content": ORCHESTRATOR_PROMPT.format(
                 round=round_num,
@@ -260,7 +307,7 @@ async def _call_orchestrator(
 # Main negotiation runner
 # ---------------------------------------------------------------------------
 
-async def run_negotiation(session: NegotiationSession) -> AsyncGenerator[dict, None]:
+async def run_negotiation(session: NegotiationSession, feedback_event: asyncio.Event | None = None) -> AsyncGenerator[dict, None]:
     agents = session.agents
     all_names = [a.name for a in agents]
 
@@ -300,14 +347,17 @@ async def run_negotiation(session: NegotiationSession) -> AsyncGenerator[dict, N
         yield emit("phase", {"phase": "proposals", "round": session.round})
 
         veto_reasons = session.veto_reasons if session.veto_count > 0 else None
-        conversation_history = build_conversation_history(agents, session.round - 1, veto_reasons)
+        conversation_history = build_conversation_history(
+            agents, session.round - 1, veto_reasons, session.feedback
+        )
 
         for a in agents:
             yield emit("thinking", {"agent_id": a.user_id, "thinking": True})
 
         proposal_tasks = {
             asyncio.create_task(
-                _call_proposal(a, session.round, venue_list, venue_pool, conversation_history)
+                _call_proposal(a, session.round, venue_list, venue_pool, conversation_history,
+                               constraints_summary=build_constraints_summary(agents, a.name))
             ): a
             for a in agents
         }
@@ -377,15 +427,42 @@ async def run_negotiation(session: NegotiationSession) -> AsyncGenerator[dict, N
 
         # --- Check convergence ---
         converged = check_convergence(agents, session.round)
-        if not converged and session.round < MAX_ROUNDS:
+        if converged or session.round >= MAX_ROUNDS:
+            break
+
+        # --- Pause for user feedback ---
+        session.phase = "feedback"
+        yield emit("phase", {"phase": "feedback", "round": session.round})
+        yield emit("awaiting_feedback", {"round": session.round, "timeout": 60})
+
+        if feedback_event is not None:
+            feedback_event.clear()
+            try:
+                await asyncio.wait_for(feedback_event.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                pass  # continue without feedback
+
+        # Emit any user feedback as messages
+        round_feedback = [f for f in session.feedback if f.get("round") == session.round]
+        for fb in round_feedback:
+            # Find the agent name for this user
+            fb_name = next((a.name for a in agents if a.user_id == fb["user_id"]), fb["user_id"])
             yield emit("message", {
-                "agent_id": "orchestrator",
-                "agent_name": "The Orchestrator",
+                "agent_id": fb["user_id"],
+                "agent_name": fb_name,
                 "round": session.round,
-                "content": f"Round {session.round} complete — no consensus yet. Moving to round {session.round + 1}.",
-                "type": "summary",
+                "content": fb["text"],
+                "type": "feedback",
             })
-            session.round += 1
+
+        yield emit("message", {
+            "agent_id": "orchestrator",
+            "agent_name": "The Orchestrator",
+            "round": session.round,
+            "content": f"Round {session.round} complete — no consensus yet. Moving to round {session.round + 1}.",
+            "type": "summary",
+        })
+        session.round += 1
 
     # --- Verdict ---
     session.phase = "verdict"
