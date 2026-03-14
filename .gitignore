@@ -5,6 +5,7 @@
 
 # dotenv files
 .env
+*.tsbuildinfo
 *.db
 *.db-shm
 *.db-wal
