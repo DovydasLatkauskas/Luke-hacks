@@ -6,4 +6,5 @@ export type POI = {
   lng: number
   name: string
   distance: number
+  imageUrl?: string | null
 }
