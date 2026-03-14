@@ -2,20 +2,27 @@
 
 # PaceRoute
 
-**AI-powered run route builder with real-time tracking and pace analytics.**
+**AI-powered, day/night-aware route builder with real-time tracking and pace analytics.**
 
-Plan a running route around cafes, pubs, monuments, or any landmark type. An AI agent generates and adapts your route live on the map. As you run, the app tracks your location, distance, pace, and time — like Strava, but your route is built by AI around the things you actually want to see.
+Plan a running or night-out route around cafes, pubs, monuments, or any landmark type. An AI agent keeps suggesting new waypoints that you can selectively add, so you iteratively build the route together — with distinct **Day (dark mode)** and **Night (night mode)** themes that match the activity and time.
 
 ---
 
 ## Features
 
 ### Route planning
-- Set a target distance (e.g. 5 km, 10 km, half marathon)
+- Start with a loose goal (e.g. "easy 5k coffee loop" or "Friday night bar hop")
 - Choose landmark categories — cafes, pubs, parks, monuments, bookshops, viewpoints, and more
-- AI agent queries local POIs and constructs a looped route that hits your landmarks and lands close to your target distance
-- Route renders live on an interactive map as the agent builds it
-- Regenerate or tweak the route with a prompt (e.g. "avoid the hill on Leith Walk" or "add one more cafe stop")
+- AI agent proposes candidate waypoints (POIs) one batch at a time
+- You accept or reject suggestions to iteratively build up the route geometry
+- Route updates live on the map as you add waypoints
+- Keep querying the agent mid-planning (e.g. "add one more park", "avoid big hills", "stay near the river")
+
+### Day & night modes
+- Day **dark mode** for runs, walks, and daytime exploration
+- Night **night mode** tuned for low-light viewing on evenings out
+- Mode influences suggested POI types (e.g. more bars at night, more parks/cafes by day)
+- Theme can auto-switch based on local time or be manually toggled
 
 ### Live tracking
 - GPS tracking starts when you begin your run
@@ -60,20 +67,25 @@ The route agent is always available mid-run. Ask it to:
 
 ## How it works
 
-### 1. Route generation
+### 1. Iterative route generation
 ```
-User sets: distance = 8 km, landmarks = [cafes, parks]
+User: mode = "Day", intent = "easy 5k with 2 coffee stops"
          ↓
-AI agent calls: search_pois(type="cafe", radius=4km, location=userLocation)
+AI agent calls: search_pois(types=["cafe", "park"], location=userLocation, radius_km=4)
          ↓
-Agent filters and scores POIs by rating, detour cost, clustering
+Agent scores POIs by rating, detour cost, clustering, and time-of-day
          ↓
-Agent calls: build_route(waypoints=[...], target_km=8)
+Frontend shows suggested waypoints in a list + on the map
          ↓
-OSRM returns geometry → rendered on Mapbox map
+User picks a subset of waypoints to add to the route
          ↓
-Agent streams commentary: "I've routed you past Artisan Roast on Broughton Street
-                           and through Inverleith Park on the way back."
+Agent calls: build_route(waypoints=[selected...], soft_target_km≈5)
+         ↓
+Map updates with new geometry
+         ↓
+User can keep querying ("add one more cafe", "avoid this hill") to get more candidates
+         ↓
+Loop continues until the user is happy with the route
 ```
 
 ### 2. Live tracking loop
@@ -118,6 +130,7 @@ Map updates with new geometry, ETA recalculated
 ```bash
 git clone https://github.com/yourname/paceroute.git
 cd paceroute
+cd frontend
 npm install
 ```
 
@@ -134,6 +147,7 @@ SUPABASE_ANON_KEY=eyJ...
 
 ### Run locally
 ```bash
+cd frontend
 npm run dev
 ```
 
@@ -147,8 +161,8 @@ Open `http://localhost:5173` in your browser.
 
 The Claude agent has access to the following tools:
 ```typescript
-search_pois(type: string, location: LatLng, radius_km: number): POI[]
-build_route(waypoints: LatLng[], target_km: number): RouteGeometry
+search_pois(types: string[], location: LatLng, radius_km: number, time_of_day: 'day' | 'night'): POI[]
+build_route(waypoints: LatLng[], soft_target_km?: number): RouteGeometry
 get_current_conditions(location: LatLng): WeatherAndClosure
 adjust_route(from: LatLng, remaining: LatLng[], constraints: string): RouteGeometry
 estimate_finish(pace_per_km: number, remaining_km: number): string
@@ -160,29 +174,20 @@ The agent uses multi-turn tool calling. The backend streams the agent's reasonin
 
 ## Project structure
 ```
-paceroute/
-├── src/
-│   ├── agent/           # Claude tool definitions and agent loop
-│   ├── components/      # React UI components
-│   │   ├── Map.tsx      # Mapbox map, route rendering, live marker
-│   │   ├── StatsBar.tsx # Pace, distance, time panel
-│   │   ├── Chat.tsx     # Agent chat interface
-│   │   └── RoutePlanner.tsx
-│   ├── hooks/
-│   │   ├── useGeolocation.ts  # GPS tracking hook
-│   │   ├── usePace.ts         # Pace + split calculations
-│   │   └── useWaypoints.ts    # Waypoint proximity detection
-│   ├── lib/
-│   │   ├── haversine.ts   # Distance between coordinates
-│   │   ├── osrm.ts        # Route geometry requests
-│   │   └── places.ts      # POI search
-│   └── server/
-│       ├── routes/
-│       │   ├── agent.ts   # SSE endpoint for agent stream
-│       │   └── runs.ts    # Save/load run history
-│       └── index.ts
+Luke-hacks/
+├── frontend/                # React + Tailwind SPA (PaceRoute UI)
+│   ├── index.html
+│   ├── src/
+│   │   ├── App.tsx          # Day/night modes, layout shell
+│   │   ├── main.tsx
+│   │   └── index.css        # Tailwind entry + global styles
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   ├── tsconfig*.json
+│   └── package.json
+├── backend/                 # (planned) Node/Express, agent, routing
+│   └── ...                  # OSRM, POI search, SSE endpoints
 ├── .env
-├── package.json
 └── README.md
 ```
 
