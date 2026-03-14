@@ -13,11 +13,11 @@ public sealed class CollaborativePlanningService
     {
         PropertyNameCaseInsensitive = true,
     };
+    private static readonly SemaphoreSlim StartLock = new(1, 1);
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly RoundtableEngineClient _roundtableEngineClient;
     private readonly ILogger<CollaborativePlanningService> _logger;
-    private readonly SemaphoreSlim _startLock = new(1, 1);
 
     public CollaborativePlanningService(
         IServiceScopeFactory scopeFactory,
@@ -132,10 +132,19 @@ public sealed class CollaborativePlanningService
             }
 
             var normalized = NormalizeConstraints(request);
-            participant.DisplayName = normalized.Name;
-            participant.ConstraintsJson = JsonSerializer.Serialize(normalized, JsonOptions);
-            participant.ConstraintsSubmittedAtUtc = DateTime.UtcNow;
-            await dbContext.SaveChangesAsync(cancellationToken);
+            var now = DateTime.UtcNow;
+            var constraintsJson = JsonSerializer.Serialize(normalized, JsonOptions);
+            var updatedRows = await dbContext.CollaborativePlanningParticipants
+                .Where(current => current.ChatId == chatId && current.UserId == userId)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(current => current.DisplayName, normalized.Name)
+                    .SetProperty(current => current.ConstraintsJson, constraintsJson)
+                    .SetProperty(current => current.ConstraintsSubmittedAtUtc, now), cancellationToken);
+
+            if (updatedRows == 0)
+            {
+                throw new InvalidOperationException("Could not persist submitted constraints. Please retry.");
+            }
         }
 
         await TryStartChatAsync(chatId, cancellationToken);
@@ -243,7 +252,7 @@ public sealed class CollaborativePlanningService
 
     private async Task TryStartChatAsync(Guid chatId, CancellationToken cancellationToken)
     {
-        await _startLock.WaitAsync(cancellationToken);
+        await StartLock.WaitAsync(cancellationToken);
         try
         {
             using var scope = _scopeFactory.CreateScope();
@@ -353,7 +362,7 @@ public sealed class CollaborativePlanningService
         }
         finally
         {
-            _startLock.Release();
+            StartLock.Release();
         }
     }
 
