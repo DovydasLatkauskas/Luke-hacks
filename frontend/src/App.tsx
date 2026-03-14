@@ -1,13 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Route, Routes } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Navigate, Route, Routes } from 'react-router-dom'
+import { useAuth } from './auth/AuthProvider'
 import { ChatDock } from './components/ChatDock'
 import { MapView } from './components/MapView'
 import { RouteRibbon } from './components/RouteRibbon'
 import { useNearbyPOIs } from './hooks/useNearbyPOIs'
 import { useUserLocation } from './hooks/useUserLocation'
 import { fetchRouteSegments, type RouteSegment } from './lib/osrm'
+import { AuthPage } from './pages/AuthPage'
 import { Dashboard } from './pages/Dashboard'
+<<<<<<< HEAD
 import type { PlannedRoute } from './types/agent'
+=======
+import NegotiationRoom from './pages/NegotiationRoom'
+import RoundTableLobby from './pages/RoundTableLobby'
+>>>>>>> 2b23c30c44396263de10f545ba5a89ce336fc687
 import type { LngLat, POI } from './types/map'
 
 export type Mode = 'day' | 'night'
@@ -232,7 +239,30 @@ function MapLayout({
   )
 }
 
+function FullScreenLoader() {
+  return (
+    <div className="flex min-h-dvh items-center justify-center bg-slate-950 text-sm text-slate-200">
+      Loading account...
+    </div>
+  )
+}
+
+function RequireAuth({ children }: { children: ReactNode }) {
+  const { status } = useAuth()
+  if (status === 'loading') return <FullScreenLoader />
+  if (status === 'anonymous') return <Navigate to="/auth" replace />
+  return <>{children}</>
+}
+
+function AnonymousOnly({ children }: { children: ReactNode }) {
+  const { status } = useAuth()
+  if (status === 'loading') return <FullScreenLoader />
+  if (status === 'authenticated') return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 export default function App() {
+  const { logout } = useAuth()
   const [mode, setMode] = useState<Mode>('day')
   const [mapMode, setMapMode] = useState<MapDimension>('2d')
 
@@ -242,11 +272,50 @@ export default function App() {
   return (
     <Routes>
       <Route
-        path="/"
-        element={<MapLayout mode={mode} toggleMode={toggleMode} mapMode={mapMode} toggleMapMode={toggleMapMode} />}
+        path="/auth"
+        element={(
+          <AnonymousOnly>
+            <AuthPage mode={mode} onToggleMode={toggleMode} />
+          </AnonymousOnly>
+        )}
       />
-      <Route path="/dashboard" element={<Dashboard mode={mode} onToggleMode={toggleMode} />} />
+      <Route
+        path="/"
+        element={(
+          <RequireAuth>
+            <MapLayout mode={mode} toggleMode={toggleMode} mapMode={mapMode} toggleMapMode={toggleMapMode} />
+          </RequireAuth>
+        )}
+      />
+      <Route
+        path="/dashboard"
+        element={(
+          <RequireAuth>
+            <Dashboard
+              mode={mode}
+              onToggleMode={toggleMode}
+              onLogout={logout}
+            />
+          </RequireAuth>
+        )}
+      />
+      <Route
+        path="/roundtable"
+        element={(
+          <RequireAuth>
+            <RoundTableLobby />
+          </RequireAuth>
+        )}
+      />
+      <Route
+        path="/roundtable/:sessionId"
+        element={(
+          <RequireAuth>
+            <NegotiationRoom />
+          </RequireAuth>
+        )}
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }
-

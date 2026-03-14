@@ -11,6 +11,7 @@ npm run dev
 ```
 
 Vite dev server runs on `http://localhost:5173` and proxies `/api/*` to `http://localhost:5028`.
+It also proxies `/roundtable/*` to `http://localhost:8000`.
 
 Start backend from repo root:
 
@@ -18,11 +19,15 @@ Start backend from repo root:
 dotnet run
 ```
 
+Collaborative planning also requires the Roundtable engine running at `http://localhost:8000` by default.
+
 ## Environment
 
 Optional:
 - `VITE_API_BASE_URL`: used by auth calls (`/api/auth/*`) in `AuthProvider`.
 
 Notes:
-- Planner and route client calls in `src/lib/agent.ts` use same-origin `/api/...`.
-- If you configure `VITE_API_BASE_URL`, keep proxy/backend routing aligned for non-auth API calls.
+- Manual map routing currently uses Overpass + OSRM client-side.
+- Collaborative planning UI uses `/api/collaborative-planning/*`.
+- `src/lib/agent.ts` still contains legacy `/api/agent/*` and `/api/google/route` clients.
+- If you set `VITE_API_BASE_URL`, auth calls use that base, while most other frontend API calls still use same-origin paths.

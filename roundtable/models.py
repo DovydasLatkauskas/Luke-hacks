@@ -7,9 +7,11 @@ class UserConstraints(BaseModel):
     name: str
     budget: Literal["budget", "mid", "splurge"]
     dietary: str
-    location: str
     mood: str
     time: str
+    location: str | None = None   # neighbourhood text from .NET backend
+    lat: float | None = None      # GPS coords from browser (preferred)
+    lng: float | None = None
 
 
 class JoinRequest(BaseModel):
@@ -67,6 +69,19 @@ class AgentState(BaseModel):
     votes: list[dict] = []
 
 
+class Venue(BaseModel):
+    id: str
+    name: str
+    slot: list[str]
+    address: str
+    lat: float
+    lng: float
+    price_level: str        # "budget" | "mid" | "splurge" | "unknown"
+    dietary_notes: str
+    description: str
+    rating: float | None = None
+
+
 class NegotiationSession(BaseModel):
     session_id: str
     expected_count: int
@@ -79,3 +94,6 @@ class NegotiationSession(BaseModel):
     message_history: list[dict] = []
     started: bool = False
     created_at: float = 0.0
+    venues: list[Venue] = []          # fetched from Google Places in Phase 1
+    centroid_lat: float = 55.9533     # Edinburgh city centre fallback
+    centroid_lng: float = -3.1883

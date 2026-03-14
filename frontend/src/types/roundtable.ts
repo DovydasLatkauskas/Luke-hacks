@@ -4,9 +4,10 @@ export type UserConstraints = {
   name: string
   budget: Budget
   dietary: string
-  location: string
   mood: string
   time: string
+  lat: number | null
+  lng: number | null
 }
 
 export type VenueSlot = {
@@ -59,9 +60,30 @@ export type AgentColumn = {
 }
 
 export type SessionStatus = {
-  session_id: string
-  expected_count: number
-  agent_count: number
-  phase: string
-  waiting_for: number
+  chatId: string
+  inviteToken: string
+  invitePath: string
+  status: 'waiting_for_constraints' | 'negotiating' | 'completed' | 'failed'
+  title: string | null
+  expectedParticipantCount: number
+  participantCount: number
+  submittedConstraintsCount: number
+  waitingForConstraintsCount: number
+  createdAtUtc: string
+  joinDeadlineUtc: string
+  startedAtUtc: string | null
+  completedAtUtc: string | null
+  roundtableSessionId: string | null
+  finalItineraryJson: string | null
+  failureReason: string | null
+  participants: SessionParticipant[]
+}
+
+export type SessionParticipant = {
+  userId: string
+  email: string | null
+  displayName: string | null
+  hasSubmittedConstraints: boolean
+  joinedAtUtc: string
+  constraintsSubmittedAtUtc: string | null
 }

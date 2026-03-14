@@ -1,89 +1,132 @@
 # PaceRoute
 
-PaceRoute is a full-stack local route planner:
-- ASP.NET Core 8 minimal API backend with Identity + SQLite
-- React + TypeScript + MapLibre frontend
-- Manual routing mode (nearby cafes/pubs + OSRM)
-- AI planning mode (OpenAI Responses API + Google Places + Google Routes)
+PaceRoute is an ASP.NET Core + React app for local outing planning.  
+Current source includes:
+- Manual map route building (frontend)
+- AI route assistant in the map chat dock
+- Collaborative multi-user planning rooms powered by a Roundtable negotiation engine
+- AI route-planning endpoints (`/api/agent/*`) in backend
 
-## Current capabilities
+## Current behavior from source
 
 ### Authentication
-- Register/login via ASP.NET Core Identity API endpoints (`/api/auth/*`)
-- Bearer token session stored in browser `localStorage`
-- Protected frontend routes:
-  - `/` map page
-  - `/dashboard` dashboard page
+- ASP.NET Core Identity API endpoints under `/api/auth/*`
+- Bearer token stored in browser `localStorage`
+- Auth-guarded routes: `/`, `/dashboard`, `/roundtable`, `/roundtable/:sessionId`
 
-Password rules from backend config:
+Password policy:
 - Minimum length `8`
-- No required digit, uppercase, lowercase, or special character
+- No required digit/uppercase/lowercase/special character
 
-### Map and routing
-- Live geolocation watch with heading (when available)
-- Fallback location if geolocation is unavailable: `55.9533, -3.1883` (Edinburgh)
-- Day mode pulls nearby `cafe` POIs from Overpass
-- Night mode pulls nearby `pub` POIs from Overpass
-- Manual POI query radius: `1500m`
-- Manual POI display limit: `5`
-- Manual routing uses OSRM foot routing in the browser
-- Route updates when stops are added/removed
+### Manual map routing (active in UI)
+- Browser geolocation watch with heading
+- Fallback center: Edinburgh (`55.9533, -3.1883`)
+- Day mode searches `cafe`, night mode searches `pub`
+- POI source: Overpass API
+- Overpass failover across multiple mirrors with in-memory cache fallback
+- Search radius: `1500m`
+- Display limit: `5` nearby POIs
+- Route source: OSRM foot routing
+- 2D/3D map toggle (MapLibre)
+- Multi-segment colored route ribbon
 
-### AI planner
-- Prompt sent to `POST /api/agent/plan`
-- Optional iterative flow available at `POST /api/agent/plan/iterative`
-- Backend asks OpenAI Responses API for a structured local intent
-- Backend searches Google Places Text Search and filters by distance
-- Backend computes a walking route using Google Routes API
-- Frontend shows returned places, route summary, and Google Maps deep links
+### AI route assistant (active in UI)
+- Chat dock submits prompts to `POST /api/agent/plan`
+- Backend uses OpenAI + Google Places to return candidate places and route stops
+- Frontend auto-selects returned stops and shows remaining suggestions
+- Route line rendering still uses OSRM segments on the frontend
+- Assistant message includes plan summary, selected stops, and optional duration text
 
-AI intent constraints enforced in backend:
-- `radiusMeters`: `500` to `20000`
-- `maxResultCount`: `3` to `8`
-- `routeStopCount`: `1` to `5`
+### Collaborative planning (active in UI + backend)
+- Create or join planning room via invite token
+- Each participant submits constraints (`name`, `budget`, `dietary`, `location`, `mood`, `time`)
+- Chat starts when:
+  - expected participants have submitted constraints, or
+  - join deadline is reached
+- Server streams negotiation events over SSE
+- UI displays live phases/messages and final itinerary
+- UI supports veto submission after a result is produced
 
-### Dashboard
-- `/dashboard` exists and is authenticated
-- Route/place cards are currently static mock data
+Backend clamps:
+- expected participants: `2..12`
+- join timeout: `30..1800` seconds
+
+### AI agent planning endpoints (backend)
+- `/api/agent/plan`
+- `/api/agent/plan/iterative`
+- `/api/google/route`
+
+Frontend currently uses `/api/agent/plan`.  
+`/api/agent/plan/iterative` and `/api/google/route` remain available for extended flows.
 
 ## Tech stack
 
 | Layer | Technology |
 |---|---|
 | Backend | ASP.NET Core 8 minimal API |
-| Auth | ASP.NET Core Identity API endpoints |
+| Auth | ASP.NET Core Identity |
 | Database | EF Core + SQLite |
 | Frontend | React 18 + TypeScript + Tailwind CSS |
-| Map | MapLibre GL |
-| Manual POI source | Overpass API |
-| Manual route source | OSRM public API |
-| AI planner | OpenAI Responses API |
-| AI place search | Google Places API (New) |
-| AI route | Google Routes API |
+| Map rendering | MapLibre GL |
+| Manual POIs | Overpass API |
+| Manual routing | OSRM public API |
+| Collaborative engine client | Roundtable SSE/HTTP client |
+| AI planning | OpenAI Responses API + Google Places/Routes |
 
 ## Configuration
 
-Backend options come from `appsettings*.json` and can be overridden by environment variables:
+Backend settings load in this order:
+1. `appsettings.json`
+2. `appsettings.{Environment}.json`
+3. `appsettings.Local.json` (optional, local-only, git-ignored)
+4. Environment variables (highest priority)
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `OPENAI_API_KEY` | OpenAI API key for planner | empty |
-| `OPENAI_MODEL` | OpenAI model used by planner | `gpt-5-mini` |
-| `GOOGLE_MAPS_API_KEY` | Google key for Places + Routes | empty |
+| `OPENAI_API_KEY` | AI planner key | empty |
+| `OPENAI_MODEL` | AI planner model | `gpt-5-mini` |
+| `GOOGLE_MAPS_API_KEY` | Google Places/Routes key | empty |
+| `ROUNDTABLE_BASE_URL` | Roundtable engine base URL | `http://localhost:8000` |
 
 Frontend optional variable:
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `VITE_API_BASE_URL` | Base URL for auth requests | empty (same-origin) |
+| `VITE_API_BASE_URL` | Base URL for auth calls | empty (same-origin) |
 
-Google key requirements:
-- Enable `Places API (New)`
-- Enable `Routes API`
+### Local API key setup (recommended)
 
-Database defaults:
-- Development profile (`ASPNETCORE_ENVIRONMENT=Development`) uses `luke-hacks.dev.db`
-- Non-development fallback is `luke-hacks.db`
+Store secrets in local non-tracked files so you can run everything without exporting env vars each time.
+
+Create `appsettings.Local.json` in repo root:
+
+```json
+{
+  "OpenAI": {
+    "ApiKey": "YOUR_OPENAI_API_KEY"
+  },
+  "GoogleMaps": {
+    "ApiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+  }
+}
+```
+
+Create `roundtable/.env`:
+
+```dotenv
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+GOOGLE_MAPS_API_KEY=YOUR_GOOGLE_MAPS_API_KEY
+```
+
+Both files are git-ignored.
+
+If you use AI planning endpoints, your Google key must have:
+- `Places API (New)`
+- `Routes API`
+
+Database files:
+- Development (`ASPNETCORE_ENVIRONMENT=Development`): `luke-hacks.dev.db`
+- Fallback/non-development: `luke-hacks.db`
 
 ## Local development
 
@@ -91,22 +134,17 @@ Database defaults:
 - .NET 8 SDK
 - Node.js 18+
 
-### 1) Start backend
+### 1) Run backend
 
 ```bash
 dotnet restore
 dotnet run
 ```
 
-Default development URL from launch profile:
-- `http://localhost:5028`
+Backend dev URL: `http://localhost:5028`  
+Swagger (development): `http://localhost:5028/swagger`
 
-Swagger UI is enabled in development at:
-- `http://localhost:5028/swagger`
-
-The app creates the SQLite database automatically on startup (`EnsureCreated`).
-
-### 2) Start frontend
+### 2) Run frontend
 
 ```bash
 cd frontend
@@ -114,35 +152,50 @@ npm install
 npm run dev
 ```
 
-Vite dev server:
-- `http://localhost:5173`
-- Proxies `/api/*` to `http://localhost:5028`
+Frontend dev URL: `http://localhost:5173`  
+Vite proxy:
+- `/api` -> `http://localhost:5028`
+- `/roundtable` -> `http://localhost:8000`
 
-### 3) Use the app
+### 3) Run Roundtable engine
 
-1. Open `http://localhost:5173`
-2. Register an account or sign in
-3. Allow browser location permission
-4. Build a manual route or submit an AI prompt
+Collaborative planning requires an engine listening at `ROUNDTABLE_BASE_URL` (default `http://localhost:8000`).
 
-## API endpoints used by the frontend
+```bash
+cd roundtable
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
 
-| Endpoint | Method | Purpose |
-|---|---|---|
-| `/api/auth/register` | `POST` | Create account |
-| `/api/auth/login` | `POST` | Return bearer tokens |
-| `/api/auth/me` | `GET` | Return current user (auth required) |
-| `/api/agent/plan` | `POST` | Prompt + location -> planned places + optional route |
-| `/api/agent/plan/iterative` | `POST` | Step-by-step route planning session |
-| `/api/google/route` | `POST` | Compute route from origin + waypoints |
+## Backend API summary
+
+### Auth
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/auth/me` (auth required)
+
+### Collaborative planning (`Authorization: Bearer ...` required)
+- `POST /api/collaborative-planning/chats`
+- `POST /api/collaborative-planning/chats/join/{inviteToken}`
+- `POST /api/collaborative-planning/chats/{chatId}/constraints`
+- `GET /api/collaborative-planning/chats/{chatId}`
+- `POST /api/collaborative-planning/chats/{chatId}/veto`
+- `GET /api/collaborative-planning/chats/{chatId}/stream?afterEventId=<id>` (SSE)
+
+### AI planning
+- `POST /api/agent/plan`
+- `POST /api/agent/plan/iterative`
+- `POST /api/google/route`
 
 ## Notes
 
-- Manual mode works without OpenAI/Google keys.
-- AI mode requires both `OPENAI_API_KEY` and `GOOGLE_MAPS_API_KEY`.
-- CORS currently allows local frontend origins on port `5173`.
-- Dockerfile builds and runs the backend service only.
-- In non-development environments, backend enables HTTPS redirection.
+- CORS allows local frontend origins on port `5173`.
+- Data protection keys persist in `.keys/`.
+- SQLite DB is created automatically at startup (`EnsureCreated`).
+- In non-development environments, HTTPS redirection is enabled.
+- Dashboard page currently shows mock route/place cards.
 
 ## Project structure
 

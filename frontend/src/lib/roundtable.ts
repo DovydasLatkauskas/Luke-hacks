@@ -1,46 +1,161 @@
-import type { UserConstraints, SessionStatus } from '../types/roundtable'
+import type { SessionStatus, UserConstraints } from '../types/roundtable'
 
-const BASE = '/roundtable'
+const BASE = '/api/collaborative-planning'
+const ACCESS_TOKEN_STORAGE_KEY = 'pace_route_access_token'
 
-export async function createSession(expectedCount: number): Promise<{ session_id: string }> {
-  const res = await fetch(`${BASE}/session`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expected_count: expectedCount }),
-  })
-  if (!res.ok) throw new Error(await res.text())
-  return res.json()
+function getAccessToken(): string {
+  const token = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY)
+  if (!token) {
+    throw new Error('You must be logged in to access collaborative planning.')
+  }
+  return token
 }
 
-export async function joinSession(
-  sessionId: string,
-  userId: string,
+function authHeaders(): HeadersInit {
+  return {
+    Authorization: `Bearer ${getAccessToken()}`,
+    'Content-Type': 'application/json',
+  }
+}
+
+async function parseJsonResponse<T>(res: Response): Promise<T> {
+  const payload = await res.json().catch(() => null)
+  if (!res.ok) {
+    const message =
+      payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
+        ? payload.error
+        : payload && typeof payload === 'object' && 'detail' in payload && typeof payload.detail === 'string'
+          ? payload.detail
+          : 'Roundtable request failed.'
+    throw new Error(message)
+  }
+
+  return payload as T
+}
+
+export async function createSession(
+  expectedCount: number,
+  joinTimeoutSeconds = 300,
+): Promise<SessionStatus> {
+  const res = await fetch(`${BASE}/chats`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      expectedParticipantCount: expectedCount,
+      joinTimeoutSeconds,
+    }),
+  })
+  return parseJsonResponse<SessionStatus>(res)
+}
+
+export async function joinByInvite(inviteToken: string): Promise<SessionStatus> {
+  const res = await fetch(`${BASE}/chats/join/${encodeURIComponent(inviteToken)}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getAccessToken()}`,
+    },
+  })
+  return parseJsonResponse<SessionStatus>(res)
+}
+
+export async function submitConstraints(
+  chatId: string,
   constraints: UserConstraints,
-): Promise<{ position: number; waiting_for: number }> {
-  const res = await fetch(`${BASE}/session/${sessionId}/join`, {
+): Promise<SessionStatus> {
+  const res = await fetch(`${BASE}/chats/${chatId}/constraints`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: userId, constraints }),
+    headers: authHeaders(),
+    body: JSON.stringify({
+      name: constraints.name,
+      budget: constraints.budget,
+      dietary: constraints.dietary,
+      location: constraints.lat !== null && constraints.lng !== null
+        ? `near ${constraints.lat.toFixed(5)}, ${constraints.lng.toFixed(5)}`
+        : 'Edinburgh city centre',
+      mood: constraints.mood,
+      time: constraints.time,
+    }),
   })
-  if (!res.ok) throw new Error(await res.text())
-  return res.json()
+  return parseJsonResponse<SessionStatus>(res)
 }
 
-export async function getSession(sessionId: string): Promise<SessionStatus> {
-  const res = await fetch(`${BASE}/session/${sessionId}`)
-  if (!res.ok) throw new Error(await res.text())
-  return res.json()
+export async function getSession(chatId: string): Promise<SessionStatus> {
+  const res = await fetch(`${BASE}/chats/${chatId}`, {
+    headers: {
+      Authorization: `Bearer ${getAccessToken()}`,
+    },
+  })
+  return parseJsonResponse<SessionStatus>(res)
 }
 
-export function openStream(sessionId: string, userId: string): EventSource {
-  return new EventSource(`${BASE}/session/${sessionId}/stream?user_id=${encodeURIComponent(userId)}`)
-}
-
-export async function submitVeto(sessionId: string, userId: string, reason: string): Promise<void> {
-  const res = await fetch(`${BASE}/session/${sessionId}/veto`, {
+export async function submitVeto(chatId: string, reason: string): Promise<void> {
+  const res = await fetch(`${BASE}/chats/${chatId}/veto`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: userId, reason }),
+    headers: authHeaders(),
+    body: JSON.stringify({ reason }),
   })
-  if (!res.ok) throw new Error(await res.text())
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Failed to submit veto.')
+  }
+}
+
+export async function streamSession(
+  chatId: string,
+  onEvent: (eventType: string, payload: string) => void,
+  signal: AbortSignal,
+  afterEventId?: number,
+): Promise<void> {
+  const url = new URL(`${BASE}/chats/${chatId}/stream`, window.location.origin)
+  if (afterEventId && afterEventId > 0) {
+    url.searchParams.set('afterEventId', String(afterEventId))
+  }
+
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${getAccessToken()}`,
+      Accept: 'text/event-stream',
+    },
+    signal,
+  })
+
+  if (!response.ok || !response.body) {
+    const text = await response.text().catch(() => '')
+    throw new Error(text || 'Unable to stream collaborative planning events.')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let currentEvent = 'message'
+  let currentData: string[] = []
+
+  while (!signal.aborted) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let boundary = buffer.indexOf('\n')
+    while (boundary >= 0) {
+      const rawLine = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 1)
+      const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine
+
+      if (line.length === 0) {
+        if (currentData.length > 0) {
+          onEvent(currentEvent, currentData.join('\n'))
+        }
+        currentEvent = 'message'
+        currentData = []
+      } else if (line.startsWith('event:')) {
+        currentEvent = line.slice('event:'.length).trim()
+      } else if (line.startsWith('data:')) {
+        currentData.push(line.slice('data:'.length).trimStart())
+      }
+
+      boundary = buffer.indexOf('\n')
+    }
+  }
 }
